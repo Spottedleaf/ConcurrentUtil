@@ -8,7 +8,6 @@ import java.util.*;
 import java.util.function.Consumer;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 
 /**
  * MT-Safe linked first in first out ordered queue.
@@ -23,57 +22,57 @@ import java.util.function.Supplier;
 public class ConcurrentLinkedList<E> implements Queue<E> {
 
     //@jdk.internal.vm.annotation.Contended
-    private volatile LinkedNode<E> head; /* Always non-null, high chance of being the actual head */
+    protected volatile LinkedNode<E> head; /* Always non-null, high chance of being the actual head */
 
     //@jdk.internal.vm.annotation.Contended
-    private volatile LinkedNode<E> tail; /* Always non-null, high chance of being the actual tail */
+    protected volatile LinkedNode<E> tail; /* Always non-null, high chance of being the actual tail */
 
     /* Note that it is possible to reach head from tail. */
 
     /* IMPL NOTE: Leave hashCode and equals to their defaults */
 
-    private static final VarHandle HEAD_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "head", LinkedNode.class);
-    private static final VarHandle TAIL_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "tail", LinkedNode.class);
+    protected static final VarHandle HEAD_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "head", LinkedNode.class);
+    protected static final VarHandle TAIL_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "tail", LinkedNode.class);
 
-    private void setHeadPlain(final LinkedNode<E> newHead) {
+    protected final void setHeadPlain(final LinkedNode<E> newHead) {
         HEAD_HANDLE.set(this, newHead);
     }
 
-    private void setTailPlain(final LinkedNode<E> newTail) {
+    protected final void setTailPlain(final LinkedNode<E> newTail) {
         TAIL_HANDLE.set(this, newTail);
     }
 
-    private void setHeadOpaque(final LinkedNode<E> newHead) {
+    protected final void setHeadOpaque(final LinkedNode<E> newHead) {
         HEAD_HANDLE.setOpaque(this, newHead);
     }
 
-    private void setTailOpaque(final LinkedNode<E> newTail) {
+    protected final void setTailOpaque(final LinkedNode<E> newTail) {
         TAIL_HANDLE.setOpaque(this, newTail);
     }
 
     @SuppressWarnings("unchecked")
-    private LinkedNode<E> getHeadOpaque() {
-        return (LinkedNode<E>)HEAD_HANDLE.getOpaque(this);
-    }
-
-    @SuppressWarnings("unchecked")
-    private LinkedNode<E> getHeadVolatile() {
-        return (LinkedNode<E>)HEAD_HANDLE.getVolatile(this);
-    }
-
-    @SuppressWarnings("unchecked")
-    private LinkedNode<E> getHeadPlain() {
+    protected final LinkedNode<E> getHeadPlain() {
         return (LinkedNode<E>)HEAD_HANDLE.get(this);
     }
 
     @SuppressWarnings("unchecked")
-    private LinkedNode<E> getTailOpaque() {
-        return (LinkedNode<E>)TAIL_HANDLE.getOpaque(this);
+    protected final LinkedNode<E> getHeadOpaque() {
+        return (LinkedNode<E>)HEAD_HANDLE.getOpaque(this);
     }
 
     @SuppressWarnings("unchecked")
-    private LinkedNode<E> getTailPlain() {
+    protected final LinkedNode<E> getHeadVolatile() {
+        return (LinkedNode<E>)HEAD_HANDLE.getVolatile(this);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected final LinkedNode<E> getTailPlain() {
         return (LinkedNode<E>)TAIL_HANDLE.get(this);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected final LinkedNode<E> getTailOpaque() {
+        return (LinkedNode<E>)TAIL_HANDLE.getOpaque(this);
     }
 
     /**
@@ -98,6 +97,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     public ConcurrentLinkedList(final Collection<? extends E> collection) {
         final Iterator<? extends E> elements = collection.iterator();
+
         if (!elements.hasNext()) {
             final LinkedNode<E> value = new LinkedNode<>(null, null);
             this.setHeadPlain(value);
@@ -118,7 +118,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         this.setTailPlain(tail);
     }
 
-    private static <T> T validateNotNull(final T value) {
+    protected static <T> T validateNotNull(final T value) {
         if (value == null) {
             throw new NullPointerException();
         }
@@ -131,9 +131,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public E remove() throws NoSuchElementException {
         final E ret = this.poll();
+
         if (ret == null) {
             throw new NoSuchElementException();
         }
+
         return ret;
     }
 
@@ -151,9 +153,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public E element() throws NoSuchElementException {
         final E ret = this.peek();
+
         if (ret == null) {
             throw new NoSuchElementException();
         }
+
         return ret;
     }
 
@@ -163,6 +167,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public boolean offer(final E element) {
         final LinkedNode<E> node = new LinkedNode<>(validateNotNull(element), null);
+
         return this.appendList(node, node);
     }
 
@@ -201,10 +206,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     public boolean preventAdds() {
         final LinkedNode<E> deadEnd = new LinkedNode<>(null, null);
         deadEnd.setNextPlain(deadEnd);
+
         if (!this.appendList(deadEnd, deadEnd)) {
             return false;
         }
-        this.setTailPlain(deadEnd); /* Ensure tail is set for the following #allowAdds call */
+
+        this.setTailPlain(deadEnd); /* (try to) Ensure tail is set for the following #allowAdds call */
         return true;
     }
 
@@ -217,9 +224,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     public void allowAdds() {
         LinkedNode<E> tail = this.getTailPlain();
+
         /* We need to find the tail given the cas on tail isn't atomic (nor volatile) in this.appendList */
         /* Thus it is possible for an outdated tail to be set */
         while (tail != (tail = tail.getNextPlain())) {}
+
         tail.setNextVolatile(null);
     }
 
@@ -231,9 +240,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         if (object == null) {
             throw new NullPointerException();
         }
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 if ((element == object || element.equals(object))
                         && curr.getAndSetElementVolatile(null) == element) {
@@ -246,6 +258,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return false;
     }
 
@@ -255,9 +268,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public boolean removeIf(final Predicate<? super E> filter) {
         boolean ret = false;
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 ret |= filter.test(element) && curr.getAndSetElementVolatile(null) == element;
             }
@@ -267,6 +283,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return ret;
     }
 
@@ -276,9 +293,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public boolean removeAll(final Collection<?> collection) {
         boolean ret = false;
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 ret |= collection.contains(element) && curr.getAndSetElementVolatile(null) == element;
             }
@@ -288,6 +308,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return ret;
     }
 
@@ -297,9 +318,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public boolean retainAll(final Collection<?> collection) {
         boolean ret = false;
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 ret |= !collection.contains(element) && curr.getAndSetElementVolatile(null) == element;
             }
@@ -309,6 +333,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return ret;
     }
 
@@ -319,9 +344,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     public Object[] toArray() {
         final List<E> ret = new ArrayList<>();
 
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 ret.add(element);
             }
@@ -342,9 +369,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     public <T> T[] toArray(final T[] array) {
         final List<T> ret = new ArrayList<>();
 
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 //noinspection unchecked
                 ret.add((T) element);
@@ -366,9 +395,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     public <T> T[] toArray(final IntFunction<T[]> generator) {
         final List<T> ret = new ArrayList<>();
 
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 //noinspection unchecked
                 ret.add((T) element);
@@ -383,7 +414,6 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         return ret.toArray(generator);
     }
 
-
     /**
      * {@inheritDoc}
      */
@@ -397,6 +427,9 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         int totalEntries = 0;
         int aliveEntries = 0;
 
+        boolean addLocked = false;
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();; ++totalEntries) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
@@ -412,14 +445,19 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             builder.append(totalEntries).append(": \"").append(element).append('"');
 
-            if (next == null || next == curr) {
+            if (next == null) {
+                break;
+            }
+            if (curr == next) {
+                addLocked = true;
                 break;
             }
             curr = next;
         }
 
         builder.append("}, total_entries: \"").append(totalEntries).append("\", alive_entries: \"").append(aliveEntries)
-                .append("\", dead_entries:").append(deadEntries).append("\"}");
+                .append("\", dead_entries:").append(deadEntries).append("\", add_locked: \"").append(addLocked)
+                .append("\"}");
 
         return builder.toString();
     }
@@ -467,7 +505,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public Iterator<E> iterator() {
-        return new LinkedIterator<>(this.getHeadVolatile()); /* Volatile is required to synchronize with the write to the first element */
+        /* Volatile is required to synchronize with the write to the first element */
+        return new LinkedIterator<>(this.getHeadVolatile());
     }
 
     /**
@@ -480,9 +519,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public int size() {
         int size = 0;
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 ++size;
             }
@@ -492,6 +534,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return size;
     }
 
@@ -511,9 +554,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         if (object == null) {
             throw new NullPointerException();
         }
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null && (element == object || element.equals(object))) {
                 return true;
             }
@@ -523,6 +569,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return false;
     }
 
@@ -535,9 +582,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         if (predicate == null) {
             throw new NullPointerException();
         }
+
+        /* Volatile is required to synchronize with the write to the first element */
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null && predicate.test(element)) {
                 return element;
             }
@@ -547,6 +597,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             }
             curr = next;
         }
+
         return null;
     }
 
@@ -558,9 +609,11 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         if (action == null) {
             throw new NullPointerException();
         }
+
         for (LinkedNode<E> curr = this.getHeadVolatile();;) {
             final E element = curr.getElementPlain(); /* Likely in sync */
             final LinkedNode<E> next = curr.getNextVolatile();
+
             if (element != null) {
                 action.accept(element);
             }
@@ -572,8 +625,9 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         }
     }
 
-    private boolean appendList(final LinkedNode<E> head, final LinkedNode<E> tail) {
+    protected final boolean appendList(final LinkedNode<E> head, final LinkedNode<E> tail) {
         int failures = 0;
+
         for (LinkedNode<E> currTail = this.getTailOpaque(), curr = currTail;;) {
             /* It has been experimentally shown that placing the read before the backoff results in significantly greater performance */
             /* It is likely due to false sharing */
@@ -581,6 +635,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             for (int i = 0; i < failures; ++i) {
                 ConcurrentUtil.pause();
             }
+
             if (next == null) {
                 final LinkedNode<E> compared = curr.compreExchangeNextVolatile(null, head);
 
@@ -616,11 +671,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         }
     }
 
-    private E getHead(final boolean remove) {
+    protected final E getHead(final boolean remove) {
         int failures = 0;
         for (LinkedNode<E> head = this.getHeadOpaque(), curr = head;;) {
             final E currentVal = curr.getElementVolatile();
             final LinkedNode<E> next = curr.getNextOpaque();
+
             for (int i = 0; i < failures; ++i) {
                 ConcurrentUtil.pause();
             }
@@ -641,10 +697,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
                     ++failures;
                     continue;
                 }
+
                 /* "CAS" to avoid setting an out-of-date head */
                 if (this.getHeadOpaque() == head) {
                     this.setHeadOpaque(next != null ? next : curr);
                 }
+
                 return currentVal;
             }
 
@@ -737,6 +795,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             if (next == curr) {
                 break;
             }
+
             if (currentVal == null) {
                 if (next == null) {
                     break;
@@ -769,117 +828,144 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
                 }
                 break;
             }
+
             curr = next;
         }
         if (curr != head) {
-            this.setHeadPlain(curr);
+            this.setHeadOpaque(curr); /* While this may be a plain write, eventually publish it for methods such as find. */
         }
         return total;
     }
 
-    private static final class LinkedNode<E> {
+    protected static final class LinkedNode<E> {
 
-        private volatile Object element;
-        private volatile LinkedNode<E> next;
+        protected volatile Object element;
+        protected volatile LinkedNode<E> next;
 
-        private static final VarHandle ELEMENT_HANDLE = ConcurrentUtil.getVarHandle(LinkedNode.class, "element", Object.class);
-        private static final VarHandle NEXT_HANDLE = ConcurrentUtil.getVarHandle(LinkedNode.class, "next", LinkedNode.class);
+        protected static final VarHandle ELEMENT_HANDLE = ConcurrentUtil.getVarHandle(LinkedNode.class, "element", Object.class);
+        protected static final VarHandle NEXT_HANDLE = ConcurrentUtil.getVarHandle(LinkedNode.class, "next", LinkedNode.class);
 
-        LinkedNode(final Object element, final LinkedNode<E> next) {
+        protected LinkedNode(final Object element, final LinkedNode<E> next) {
             ELEMENT_HANDLE.set(this, element);
             NEXT_HANDLE.set(this, next);
         }
 
-        public void setElementPlain(final E update) {
+        protected final void setElementPlain(final E update) {
             ELEMENT_HANDLE.set(this, (Object)update);
         }
 
-        public void setElementOpaque(final E update) {
+        protected final void setElementOpaque(final E update) {
             ELEMENT_HANDLE.setOpaque(this, (Object)update);
         }
 
+        protected final void setElementVolatile(final E update) {
+            ELEMENT_HANDLE.setVolatile(this, (Object)update);
+        }
+
         @SuppressWarnings("unchecked")
-        public E getElementPlain() {
+        protected final E getElementPlain() {
             return (E)ELEMENT_HANDLE.get(this);
         }
 
         @SuppressWarnings("unchecked")
-        public E getElementVolatile() {
+        protected final E getElementVolatile() {
             return (E)ELEMENT_HANDLE.getVolatile(this);
         }
 
         @SuppressWarnings("unchecked")
-        public E compareExchangeElementVolatile(final E expect, final E update) {
+        protected final E compareExchangeElementVolatile(final E expect, final E update) {
             return (E)ELEMENT_HANDLE.compareAndExchange(this, expect, update);
         }
 
         @SuppressWarnings("unchecked")
-        public E getAndSetElementVolatile(final E update) {
+        protected final E getAndSetElementVolatile(final E update) {
             return (E)ELEMENT_HANDLE.getAndSet(this, update);
         }
 
-        public void setNextPlain(final LinkedNode<E> next) {
+        protected final void setNextPlain(final LinkedNode<E> next) {
             NEXT_HANDLE.set(this, next);
         }
 
-        public void setNextVolatile(final LinkedNode<E> next) {
+        protected final void setNextVolatile(final LinkedNode<E> next) {
             NEXT_HANDLE.setVolatile(this, next);
         }
 
         @SuppressWarnings("unchecked")
-        public LinkedNode<E> compreExchangeNextVolatile(final LinkedNode<E> expect, final LinkedNode<E> set) {
+        protected final LinkedNode<E> compreExchangeNextVolatile(final LinkedNode<E> expect, final LinkedNode<E> set) {
             return (LinkedNode<E>)NEXT_HANDLE.compareAndExchange(this, expect, set);
         }
 
         @SuppressWarnings("unchecked")
-        public LinkedNode<E> getNextPlain() {
+        protected final LinkedNode<E> getNextPlain() {
             return (LinkedNode<E>)NEXT_HANDLE.get(this);
         }
 
         @SuppressWarnings("unchecked")
-        public LinkedNode<E> getNextOpaque() {
+        protected final LinkedNode<E> getNextOpaque() {
             return (LinkedNode<E>)NEXT_HANDLE.getOpaque(this);
         }
 
         @SuppressWarnings("unchecked")
-        public LinkedNode<E> getNextAcquire() {
+        protected final LinkedNode<E> getNextAcquire() {
             return (LinkedNode<E>)NEXT_HANDLE.getAcquire(this);
         }
 
         @SuppressWarnings("unchecked")
-        public LinkedNode<E> getNextVolatile() {
+        protected final LinkedNode<E> getNextVolatile() {
             return (LinkedNode<E>)NEXT_HANDLE.getVolatile(this);
         }
     }
 
-    private static final class LinkedIterator<E> implements Iterator<E> {
+    protected static final class LinkedIterator<E> implements Iterator<E> {
 
-        private LinkedNode<E> curr;
-        private E next;
+        protected LinkedNode<E> curr; /* last returned by next() */
+        protected LinkedNode<E> next; /* next to return from next() */
+        protected E nextElement; /* cached to avoid a race condition with removing or polling */
 
-        LinkedIterator(final LinkedNode<E> head) {
-            this.curr = head;
-        }
-
-        /* sets next to the next value, or null if empty */
-        private void findNext() {
-            LinkedNode<E> curr = this.curr;
-            for (;curr != null;) {
-                final E element = (E) curr.getElementPlain();
+        protected LinkedIterator(final LinkedNode<E> start) {
+            /* setup nextElement and next */
+            for (LinkedNode<E> curr = start;;) {
                 final LinkedNode<E> next = curr.getNextVolatile();
+
+                final E element = curr.getElementPlain();
+
                 if (element != null) {
-                    this.curr = curr;
-                    this.next = element;
-                    return;
+                    this.nextElement = element;
+                    this.next = curr;
+                    break;
                 }
-                if (next == curr) {
+
+                if (next == null || next == curr) {
                     break;
                 }
                 curr = next;
             }
-            /* reached end of list */
-            this.curr = null;
+        }
+
+        protected final void findNext() {
+            /* only called if this.nextElement != null, which means this.next != null */
+            for (LinkedNode<E> curr = this.next;;) {
+                final LinkedNode<E> next = curr.getNextVolatile();
+
+                if (next == null || next == curr) {
+                    break;
+                }
+
+                final E element = next.getElementPlain();
+
+                if (element != null) {
+                    this.nextElement = element;
+                    this.curr = this.next; /* this.next will be the value returned from next(), set this.curr for remove() */
+                    this.next = next;
+                    return;
+                }
+                curr = next;
+            }
+
+            /* out of nodes to iterate */
+            /* keep curr for remove() calls */
             this.next = null;
+            this.nextElement = null;
         }
 
         /**
@@ -887,10 +973,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
          */
         @Override
         public boolean hasNext() {
-            if (this.next == null) {
-                this.findNext();
-            }
-            return this.next == null;
+            return this.nextElement != null;
         }
 
         /**
@@ -898,10 +981,15 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
          */
         @Override
         public E next() {
-            if (!this.hasNext()) {
+            final E element = this.nextElement;
+
+            if (element == null) {
                 throw new NoSuchElementException();
             }
-            return this.next;
+
+            this.findNext();
+
+            return element;
         }
 
         /**
@@ -909,11 +997,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
          */
         @Override
         public void remove() {
-            if (this.next == null) {
+            if (this.curr == null) {
                 throw new IllegalStateException();
             }
-            this.curr.setElementOpaque(null);
-            this.next = null;
+
+            this.curr.setElementVolatile(null);
+            this.curr = null;
         }
     }
 }
