@@ -46,14 +46,15 @@ public class WeakSeqLock implements SeqLock {
 
     @Override
     public int tryAcquireRead() {
+        final int lock = this.getLockOpaque();
+
         VarHandle.loadLoadFence();
-        return this.getLockOpaque();
+
+        return lock;
     }
 
     @Override
     public int acquireRead() {
-        VarHandle.loadLoadFence();
-
         int failures = 0;
         int curr;
 
@@ -62,14 +63,13 @@ public class WeakSeqLock implements SeqLock {
                 Thread.onSpinWait();
             }
 
-            //VarHandle.loadLoadFence();
-
             if (++failures > 5_000) { /* TODO determine a threshold */
                 Thread.yield();
             }
             /* Better waiting is beyond the scope of this lock; if it is needed the lock is being misused */
         }
 
+        VarHandle.loadLoadFence();
         return curr;
     }
 
