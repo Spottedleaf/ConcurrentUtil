@@ -24,6 +24,9 @@ import java.util.function.*;
  * fast-fail attempt made by iterators, thus modifying the iterator's backing map while iterating will have undefined
  * behaviour.
  * </p>
+ * <p>
+ * Subclasses should override {@link #clone()} to return correct instances of this class.
+ * </p>
  * @param <K> {@inheritDoc}
  * @param <V> {@inheritDoc}
  */
@@ -190,7 +193,6 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         final TableEntry<K, V>[] table = this.getTablePlain();
 
         for (TableEntry<K, V> curr = table[hash & (table.length - 1)]; curr != null; curr = curr.getNextPlain()) {
-
             if (hash == curr.hash && (key == curr.key || curr.key.equals(key))) {
                 return curr;
             }
@@ -304,7 +306,6 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
-
                 action.accept(curr);
             }
         }
@@ -500,14 +501,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             newCapacity = Integer.MIN_VALUE >>> 1;
         }
 
-        final TableEntry<K, V>[] newTable;
-        try {
-            //noinspection unchecked
-            newTable = new TableEntry[newCapacity];
-        } catch (final OutOfMemoryError oom) {
-            /* no resize I guess */
-            return;
-        }
+        //noinspection unchecked
+        final TableEntry<K, V>[] newTable = new TableEntry[newCapacity];
         final int indexMask = newCapacity - 1;
 
         for (int i = 0, len = table.length; i < len; ++i) {
@@ -515,13 +510,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
                 final int hash = entry.hash;
                 final int index = hash & indexMask;
 
-                final TableEntry<K, V> insert; /* we need to create a new entry since there could be reading threads */
-                try {
-                    insert = new TableEntry<>(hash, entry.key, entry.getValuePlain());
-                } catch (final OutOfMemoryError oom) {
-                    /* no resize I guess */
-                    return;
-                }
+                /* we need to create a new entry since there could be reading threads */
+                final TableEntry<K, V> insert = new TableEntry<>(hash, entry.key, entry.getValuePlain());
 
                 TableEntry<K, V> prev = newTable[index];
 

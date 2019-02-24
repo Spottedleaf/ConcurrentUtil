@@ -59,7 +59,7 @@ public class VolatileSeqLock implements SeqLock {
                 Thread.onSpinWait();
             }
 
-            if (this.canRead(curr) && (curr == (curr = this.compareAndExchangeLockVolatile(curr, curr + 1)))) {
+            if (this.canRead(curr) && (curr == (curr = this.compareAndExchangeLockVolatile(curr, curr | 1)))) {
                 return;
             }
 

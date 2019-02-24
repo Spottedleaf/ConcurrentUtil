@@ -6,19 +6,19 @@ public final class IntegerUtil {
     public static final long HIGH_BIT_U64 = Long.MIN_VALUE;
 
     public static int ceilLog2(final int value) {
-        return 32 - Integer.numberOfLeadingZeros(value - 1);
+        return Integer.SIZE - Integer.numberOfLeadingZeros(value - 1);
     }
 
     public static long ceilLog2(final long value) {
-        return 64 - Long.numberOfLeadingZeros(value - 1);
+        return Long.SIZE - Long.numberOfLeadingZeros(value - 1);
     }
 
     public static int floorLog2(final int value) {
-        return 31 ^ Integer.numberOfLeadingZeros(value);
+        return (Integer.SIZE - 1) ^ Integer.numberOfLeadingZeros(value);
     }
 
     public static int floorLog2(final long value) {
-        return 63 ^ Long.numberOfLeadingZeros(value);
+        return (Long.SIZE - 1) ^ Long.numberOfLeadingZeros(value);
     }
 
     public static int roundCeilLog2(final int value) {

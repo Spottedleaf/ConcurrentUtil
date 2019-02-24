@@ -22,26 +22,24 @@ public class WeakSeqLock implements SeqLock {
         LOCK_HANDLE.setOpaque(this, value);
     }
 
-    protected final void incrementLockCount() {
-        final int lock = this.getLockPlain();
-        VarHandle.storeStoreFence();
-        this.setLockOpaque(lock + 1);
-    }
-
     @Override
     public void acquireWrite() {
-        this.incrementLockCount();
+        final int lock = this.getLockPlain();
+        this.setLockOpaque(lock + 1);
+        VarHandle.storeStoreFence();
     }
 
     @Override
     public boolean tryAcquireWrite() {
-        this.incrementLockCount();
+        this.acquireWrite();
         return true;
     }
 
     @Override
     public void releaseWrite() {
-        this.incrementLockCount();
+        final int lock = this.getLockPlain();
+        VarHandle.storeStoreFence();
+        this.setLockOpaque(lock + 1);
     }
 
     @Override
