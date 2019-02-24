@@ -701,7 +701,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             if (currentVal != null) {
                 if (!predicate.test(currentVal)) {
                     /* Try to update stale head */
-                    if (this.getHeadOpaque() == head && curr != head) {
+                    if (curr != head && this.getHeadOpaque() == head) {
                         this.setHeadOpaque(curr);
                     }
                     return null;
@@ -725,7 +725,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             if (next == null) {
                 /* Try to update stale head */
-                if (this.getHeadOpaque() == head && curr != head) {
+                if (curr != head && this.getHeadOpaque() == head) {
                     this.setHeadOpaque(curr);
                 }
                 return null; /* End of queue */
@@ -775,7 +775,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             if (next == null) {
                 /* Try to update stale head */
-                if (this.getHeadOpaque() == head && curr != head) {
+                if (curr != head && this.getHeadOpaque() == head) {
                     this.setHeadOpaque(curr);
                 }
                 return null; /* End of queue */
