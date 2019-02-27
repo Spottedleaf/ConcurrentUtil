@@ -79,6 +79,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         } else {
             this.threshold = (int)(tableSize * loadFactor);
         }
+        VarHandle.storeStoreFence();
     }
 
     /**
