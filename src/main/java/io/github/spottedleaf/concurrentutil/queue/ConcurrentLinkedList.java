@@ -34,20 +34,14 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     protected static final VarHandle HEAD_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "head", LinkedNode.class);
     protected static final VarHandle TAIL_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "tail", LinkedNode.class);
 
+    /* head */
+
     protected final void setHeadPlain(final LinkedNode<E> newHead) {
         HEAD_HANDLE.set(this, newHead);
     }
 
-    protected final void setTailPlain(final LinkedNode<E> newTail) {
-        TAIL_HANDLE.set(this, newTail);
-    }
-
     protected final void setHeadOpaque(final LinkedNode<E> newHead) {
         HEAD_HANDLE.setOpaque(this, newHead);
-    }
-
-    protected final void setTailOpaque(final LinkedNode<E> newTail) {
-        TAIL_HANDLE.setOpaque(this, newTail);
     }
 
     @SuppressWarnings("unchecked")
@@ -65,6 +59,16 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         return (LinkedNode<E>)HEAD_HANDLE.getVolatile(this);
     }
 
+    /* tail */
+
+    protected final void setTailPlain(final LinkedNode<E> newTail) {
+        TAIL_HANDLE.set(this, newTail);
+    }
+
+    protected final void setTailOpaque(final LinkedNode<E> newTail) {
+        TAIL_HANDLE.setOpaque(this, newTail);
+    }
+
     @SuppressWarnings("unchecked")
     protected final LinkedNode<E> getTailPlain() {
         return (LinkedNode<E>)TAIL_HANDLE.get(this);
@@ -74,7 +78,6 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     protected final LinkedNode<E> getTailOpaque() {
         return (LinkedNode<E>)TAIL_HANDLE.getOpaque(this);
     }
-
     /**
      * Constructs a {@code ConcurrentLinkedList}, initially empty.
      * <p>
@@ -919,6 +922,18 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             NEXT_HANDLE.set(this, next);
         }
 
+        /* element */
+
+        @SuppressWarnings("unchecked")
+        protected final E getElementPlain() {
+            return (E)ELEMENT_HANDLE.get(this);
+        }
+
+        @SuppressWarnings("unchecked")
+        protected final E getElementVolatile() {
+            return (E)ELEMENT_HANDLE.getVolatile(this);
+        }
+
         protected final void setElementPlain(final E update) {
             ELEMENT_HANDLE.set(this, (Object)update);
         }
@@ -932,13 +947,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         }
 
         @SuppressWarnings("unchecked")
-        protected final E getElementPlain() {
-            return (E)ELEMENT_HANDLE.get(this);
-        }
-
-        @SuppressWarnings("unchecked")
-        protected final E getElementVolatile() {
-            return (E)ELEMENT_HANDLE.getVolatile(this);
+        protected final E getAndSetElementVolatile(final E update) {
+            return (E)ELEMENT_HANDLE.getAndSet(this, update);
         }
 
         @SuppressWarnings("unchecked")
@@ -946,23 +956,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             return (E)ELEMENT_HANDLE.compareAndExchange(this, expect, update);
         }
 
-        @SuppressWarnings("unchecked")
-        protected final E getAndSetElementVolatile(final E update) {
-            return (E)ELEMENT_HANDLE.getAndSet(this, update);
-        }
-
-        protected final void setNextPlain(final LinkedNode<E> next) {
-            NEXT_HANDLE.set(this, next);
-        }
-
-        protected final void setNextVolatile(final LinkedNode<E> next) {
-            NEXT_HANDLE.setVolatile(this, next);
-        }
-
-        @SuppressWarnings("unchecked")
-        protected final LinkedNode<E> compreExchangeNextVolatile(final LinkedNode<E> expect, final LinkedNode<E> set) {
-            return (LinkedNode<E>)NEXT_HANDLE.compareAndExchange(this, expect, set);
-        }
+        /* next */
 
         @SuppressWarnings("unchecked")
         protected final LinkedNode<E> getNextPlain() {
@@ -982,6 +976,19 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         @SuppressWarnings("unchecked")
         protected final LinkedNode<E> getNextVolatile() {
             return (LinkedNode<E>)NEXT_HANDLE.getVolatile(this);
+        }
+
+        protected final void setNextPlain(final LinkedNode<E> next) {
+            NEXT_HANDLE.set(this, next);
+        }
+
+        protected final void setNextVolatile(final LinkedNode<E> next) {
+            NEXT_HANDLE.setVolatile(this, next);
+        }
+
+        @SuppressWarnings("unchecked")
+        protected final LinkedNode<E> compreExchangeNextVolatile(final LinkedNode<E> expect, final LinkedNode<E> set) {
+            return (LinkedNode<E>)NEXT_HANDLE.compareAndExchange(this, expect, set);
         }
     }
 

@@ -1,4 +1,4 @@
-package io.github.spottedleaf.concurrentutil.misc;
+package io.github.spottedleaf.concurrentutil.lock;
 
 import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
 
