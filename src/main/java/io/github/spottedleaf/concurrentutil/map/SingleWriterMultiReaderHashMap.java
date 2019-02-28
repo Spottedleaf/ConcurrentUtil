@@ -72,13 +72,14 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         //noinspection unchecked
         final TableEntry<K, V>[] table = new TableEntry[tableSize];
         this.setTablePlain(table);
-        this.loadFactor = loadFactor;
 
         if (tableSize == (Integer.MIN_VALUE >>> 1)) {
             this.threshold = -1;
         } else {
             this.threshold = (int)(tableSize * loadFactor);
         }
+
+        this.loadFactor = loadFactor;
         VarHandle.storeStoreFence();
     }
 
@@ -286,6 +287,9 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         return builder.append(']').toString();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public SingleWriterMultiReaderHashMap<K, V> clone() {
         return new SingleWriterMultiReaderHashMap<>(this.getTableAcquire().length, this.loadFactor, this);

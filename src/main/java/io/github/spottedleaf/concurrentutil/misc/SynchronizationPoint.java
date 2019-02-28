@@ -8,74 +8,129 @@ import java.util.concurrent.locks.LockSupport;
 
 public class SynchronizationPoint {
 
-    private final Thread[] threads;
-    private final long allWaitingThreads;
+    protected static final long WAKING_THREADS_BITFIELD = Long.MIN_VALUE;
 
-    /** represents the threads which are currently executing (that is, threads not waiting on finish) */
-    private volatile long runningThreads;
+    protected final Thread[] threads;
+    protected final long allWaitingThreads;
 
-    /** represents the threads which have requested to execute alone */
-    private volatile long requireAloneExecution;
+    //@jdk.internal.vm.annotation.Contended
+    protected volatile long runningThreads;
 
-    /** Threads which are waiting on this synchronization point */
-    private volatile long synchronizingThreads;
+    //@jdk.internal.vm.annotation.Contended
+    protected volatile long synchronizingThreads;
 
-    private long aloneThreadRentryCount = 0;
+    //@jdk.internal.vm.annotation.Contended
+    protected volatile long aloneExecutionThreads;
 
-    private static final VarHandle RUNNING_THREADs = ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "runningThreads", long.class);
-    private static final VarHandle REQUIRE_ALONE_EXECUTION = ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "requireAloneExecution", long.class);
-    private static final VarHandle SYNCHRONIZING_THREADS = ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "synchronizingThreads", long.class);
+    protected volatile int synchronizingLockCount;
+    protected volatile int startLockCount;
 
-    private long compareAndExchangeSynchronizingThreadsVolatile(final long expect, final long update) {
-        return (long)SYNCHRONIZING_THREADS.compareAndExchange(this, expect, update);
+    protected int reEntryCount;
+
+    protected static final VarHandle RUNNING_THREADS_HANDLE =
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "runningThreads", long.class);
+    protected static final VarHandle SYNCHRONIZING_THREADS_HANDLE =
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "synchronizingThreads", long.class);
+    protected static final VarHandle ALONE_EXECUTION_THREADS_HANDLE =
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "aloneExecutionThreads", long.class);
+
+    protected static final VarHandle SYNCHRONIZING_LOCK_COUNT_HANDLE =
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "synchronizingLockCount", int.class);
+    protected static final VarHandle START_LOCK_COUNT_HANDLE =
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "startLockCount", int.class);
+
+    /* running threads */
+
+    protected final long getRunningThreadsOpaque() {
+        return (long)RUNNING_THREADS_HANDLE.getOpaque(this);
     }
 
-    private long getAndBitwiseOrSynchronizingThreadsVolatile(final long param) {
-        return (long)SYNCHRONIZING_THREADS.getAndBitwiseOr(this, param);
+    protected final long getRunningThreadsVolatile() {
+        return (long)RUNNING_THREADS_HANDLE.getVolatile(this);
     }
 
-    private long getAndBitwiseOrRunningThreadsVolatile(final long param) {
-        return (long)RUNNING_THREADs.getAndBitwiseOr(this, param);
+    protected final long getAndOrRunningThreadsVolatile(final long param) {
+        return (long)RUNNING_THREADS_HANDLE.getAndBitwiseXor(this, param);
     }
 
-    private long getAndBitwiseXorRunningThreadsVolatile(final long param) {
-        return (long)RUNNING_THREADs.getAndBitwiseXor(this, param);
+    protected final long getAndXorRunningThreadsVolatile(final long param) {
+        return (long)RUNNING_THREADS_HANDLE.getAndBitwiseXor(this, param);
     }
 
-    private long getRunningThreadsOpaque() {
-        return (long)RUNNING_THREADs.getOpaque(this);
+    /* synchronizing threads */
+
+    protected final long getSynchronizingThreadsPlain() {
+        return (long)SYNCHRONIZING_THREADS_HANDLE.get(this);
     }
 
-    private long getRunningThreadsAcquire() {
-        return (long)RUNNING_THREADs.getAcquire(this);
+    protected final long getSynchronizingThreadsOpaque() {
+        return (long)SYNCHRONIZING_THREADS_HANDLE.getOpaque(this);
     }
 
-    private long getRunningThreadsVolatile() {
-        return (long)RUNNING_THREADs.getVolatile(this);
+    protected final long getSynchronizingThreadsVolatile() {
+        return (long)SYNCHRONIZING_THREADS_HANDLE.getVolatile(this);
     }
 
-    private long getSynchronizingThreadsOpaque() {
-        return (long)SYNCHRONIZING_THREADS.getOpaque(this);
+    protected final long compareAndExchangeSynchronizingThreadsVolatile(final long expect, final long update) {
+        return (long)SYNCHRONIZING_THREADS_HANDLE.compareAndExchange(this, expect, update);
     }
 
-    private long getSynchronizingThreadsVolatile() {
-        return (long)SYNCHRONIZING_THREADS.getVolatile(this);
+    protected final long getAndOrSynchronizingThreadsVolatile(final long param) {
+        return (long)SYNCHRONIZING_THREADS_HANDLE.getAndBitwiseOr(this, param);
     }
 
-    private long getRequireAloneExecutionOpaque() {
-        return (long)REQUIRE_ALONE_EXECUTION.getOpaque(this);
+    /* alone execution threads */
+
+    protected final long getAloneExecutionThreadsPlain() {
+        return (long)ALONE_EXECUTION_THREADS_HANDLE.get(this);
     }
 
-    private long getRequireAloneExecutionVolatile() {
-        return (long)REQUIRE_ALONE_EXECUTION.getVolatile(this);
+    protected final long getAloneExecutionThreadsVolatile() {
+        return (long)ALONE_EXECUTION_THREADS_HANDLE.getVolatile(this);
     }
 
-    private void setRequireAloneExecutionVolatile(final long value) {
-        REQUIRE_ALONE_EXECUTION.setOpaque(this, value);
+    protected final void setAloneExecutionThreadsPlain(final long value) {
+        ALONE_EXECUTION_THREADS_HANDLE.set(this, value);
     }
 
-    private long getAndBitwiseOrRequireAloneExecutionVolatile(final long param) {
-        return (long)REQUIRE_ALONE_EXECUTION.getAndBitwiseOr(param);
+    protected final void setAloneExecutionThreadsVolatile(final long value) {
+        ALONE_EXECUTION_THREADS_HANDLE.setVolatile(this, value);
+    }
+
+    protected final long getAndOrAloneExecutionThreadsVolatile(final long param) {
+        return (long)ALONE_EXECUTION_THREADS_HANDLE.getAndBitwiseOr(this, param);
+    }
+
+    /* synchronizing lock count */
+
+    protected final int getSynchronizingLockCountPlain() {
+        return (int)SYNCHRONIZING_LOCK_COUNT_HANDLE.get(this);
+    }
+
+    protected final int getSynchronizingLockCountVolatile() {
+        return (int)SYNCHRONIZING_LOCK_COUNT_HANDLE.getVolatile(this);
+    }
+
+    protected final void setSynchronizingLockCountVolatile(final int value) {
+        SYNCHRONIZING_LOCK_COUNT_HANDLE.setVolatile(this, value);
+    }
+
+    protected final int compareAndExchangeSynchronizingLockCountVolatile(final int expect, final int update) {
+        return (int)SYNCHRONIZING_LOCK_COUNT_HANDLE.compareAndExchange(this, expect, update);
+    }
+
+    /* start lock count */
+
+    protected final int getStartLockCountPlain() {
+        return (int)START_LOCK_COUNT_HANDLE.get(this);
+    }
+
+    protected final int getStartLockCountVolatile() {
+        return (int)START_LOCK_COUNT_HANDLE.getVolatile(this);
+    }
+
+    protected final void setStartLockCountVolatile(final int value) {
+        START_LOCK_COUNT_HANDLE.setVolatile(this, value);
     }
 
     /**
@@ -84,167 +139,189 @@ public class SynchronizationPoint {
      */
     public SynchronizationPoint(final Thread[] threads) {
         final int nthreads = threads.length;
-        if (nthreads > 64 || nthreads == 0) {
-            throw new IllegalArgumentException("total threads out of range (0, 64]: " + nthreads);
+        if (nthreads >= 64 || nthreads == 0) {
+            throw new IllegalArgumentException("total threads out of range (0, 64): " + nthreads);
         }
         this.allWaitingThreads = -1L >>> (64 - nthreads); /* mask that represents all threads waiting */
         this.threads = threads;
     }
 
-    private void unparkAll(final int exceptFor) {
+    protected final void unparkAll(final int exceptFor) {
         for (int i = 0; i < exceptFor; ++i) {
             LockSupport.unpark(this.threads[i]);
         }
-        for (int i = exceptFor + 1; i < this.threads.length; ++i) {
+        for (int i = exceptFor + 1, len = this.threads.length; i < len; ++i) {
             LockSupport.unpark(this.threads[i]);
         }
     }
 
-    private void unparkAll(long bitset) {
-        while (bitset != 0) {
-            final int id = IntegerUtil.floorLog2(bitset);
-            bitset ^= (1L << id);
-            LockSupport.unpark(this.threads[id]);
+    protected final void unparkAll(long bitset) {
+        for (int i = 0, times = Long.bitCount(bitset); i < times; ++i) {
+            final int leading = Long.numberOfLeadingZeros(bitset);
+            bitset ^= (IntegerUtil.HIGH_BIT_U64 >>> leading); // inlined IntegerUtil#roundFloorLog2(long)
+            LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
         }
+    }
+
+    /** @return {@code true} if the calling thread can continue, {@code false} otherwise */
+    protected final boolean wakeThreads(final int id) {
+        final long aloneThreads = this.getAloneExecutionThreadsPlain();
+
+        if (aloneThreads == 0) {
+            /* no more alone threads to execute, we can continue */
+
+            this.setSynchronizingLockCountVolatile(this.getSynchronizingLockCountPlain() + 1);
+            /* remove our bitfield and the field for indicating we're waking the threads */
+            /* We use AND for our bitfield since it's not guaranteed that ours is in the synchronizing threads (see end()) */
+            this.unparkAll((this.getSynchronizingThreadsPlain() ^ WAKING_THREADS_BITFIELD) & ~(1L << id));
+
+            return true;
+        }
+
+        final int leading = Long.numberOfLeadingZeros(aloneThreads);
+
+        /* we need to set this before unpark() so the alone thread can wake up from park() */
+        this.setAloneExecutionThreadsVolatile(aloneThreads ^ (IntegerUtil.HIGH_BIT_U64 >>> leading)); // inlined IntegerUtil#roundFloorLog2(long)
+        LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
+
+        /* indicate there are alone threads executing (possibly) */
+
+        return false;
     }
 
     public void start(final int id) {
         final long bitfield = 1L << id;
-        final long prev = this.getAndBitwiseOrRunningThreadsVolatile(bitfield);
-        if ((prev | bitfield) == prev) {
-            throw new IllegalStateException("start is not re-entrant");
-        }
-        if ((prev | bitfield) != this.allWaitingThreads) {
+        final int lockCount = this.getStartLockCountPlain();
+
+        final long runningThreads = this.getAndOrRunningThreadsVolatile(bitfield) | bitfield;
+
+        if (runningThreads != this.allWaitingThreads) {
             do {
                 LockSupport.park();
-            } while (this.getRunningThreadsAcquire() != this.allWaitingThreads); /* Use acquire to synchronize */
+            } while (this.getStartLockCountVolatile() == lockCount);
         } else {
+            this.setStartLockCountVolatile(lockCount + 1);
             this.unparkAll(id);
         }
     }
 
     public void end(final int id) {
         final long bitfield = 1L << id;
-        /* Ensure we've started */
-        if ((this.getRunningThreadsOpaque() & bitfield) == 0) {
-            throw new IllegalStateException("not yet started");
-        }
+        final int lockCount = this.getStartLockCountPlain();
 
-        /* Make sure we're not missing an endAloneExecution() call */
+        final long runningThreads = this.getAndXorRunningThreadsVolatile(bitfield) ^ bitfield;
 
-        long synchronizingThreads = this.getSynchronizingThreadsOpaque(); /* volatile not required to see if our bitfield is set */
-        if ((synchronizingThreads & bitfield) != 0) {
-            throw new IllegalStateException("cannot end while synchronizing (missing endAloneExecution call)");
-        }
-
-        /* Remove from running threads */
-        final long prev = this.getAndBitwiseXorRunningThreadsVolatile(bitfield);
-
-        if (prev == bitfield) {
-            /* All other threads have ended, we're the last one out which means we have to wake up all the other threads */
+        if (runningThreads == 0) {
+            /* Last thread running */
+            this.setStartLockCountVolatile(lockCount + 1);
             this.unparkAll(id);
+
             return;
         }
 
-        final long otherThreads = prev ^ bitfield;
-        if (otherThreads == (synchronizingThreads = this.getSynchronizingThreadsVolatile())) { // TODO re-read and volatile?
-            final long aloneThreads = this.getRequireAloneExecutionVolatile(); // TODO volatile? // TODO
-            /* In this case all other threads are waiting on this thread to synchronize */
-            /* We need to wake them up before we park */
-            if (synchronizingThreads == this.compareAndExchangeSynchronizingThreadsVolatile(synchronizingThreads, 0)) {
-                /* While there is no harm in double unparking the waiting threads, the performance of doing so is likely awful compared to a cas */
-                /* so we ensure we don't double unpark by casing */
-                this.unparkAll(otherThreads);
-            }
+        final long synchronizingThreads = this.getSynchronizingThreadsOpaque();
+
+        if (synchronizingThreads == runningThreads
+                && synchronizingThreads == this.compareAndExchangeSynchronizingThreadsVolatile(synchronizingThreads, synchronizingThreads | WAKING_THREADS_BITFIELD)) {
+            this.wakeThreads(id);
         }
 
         do {
             LockSupport.park();
-        } while (this.getRunningThreadsAcquire() != 0); /* Use acquire to synchronize */
+        } while (this.getStartLockCountVolatile() == lockCount);
     }
 
     public void weakEnter(final int id) {
-        if (this.getSynchronizingThreadsOpaque() != 0) {
-            this.waitEnter(id);
+        /* Use volatile to prevent re-ordering of this call */
+        if (this.getSynchronizingThreadsVolatile() != 0) {
+            this.enter(id);
         }
     }
 
-    public void waitEnter(final int id) {
+    public void enter(final int id) {
         final long bitfield = 1L << id;
-        if (this.getSynchronizingThreadsOpaque() == this.getRunningThreadsOpaque()) {
-            // we are the alone thread executing (which makes the opaque reads fine)
-            // it could be plain but that would risk non-atomic reads
+        final int lockCount = this.getSynchronizingLockCountPlain();
+
+        if (this.reEntryCount != 0) {
+            // we are the alone thread executing, we are re-entrant
             return;
         }
-        final long synchronizing = this.getAndBitwiseOrSynchronizingThreadsVolatile(bitfield);
-        if ((synchronizing | bitfield) != this.getRunningThreadsVolatile()) {
+
+        final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield) | bitfield;
+        if (synchronizing != this.getRunningThreadsOpaque()) {
             /* Other threads are running */
+            do {
+                LockSupport.park();
+            } while (this.getSynchronizingLockCountVolatile() == lockCount);
+        }
+        /* potentially the only thread executing */
+        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
+            /* Lost cas, so we assume an alone thread could execute */
+            do {
+                LockSupport.park();
+            } while (this.getSynchronizingLockCountVolatile() == lockCount);
+        } else {
+            /* Won cas, now we must wake up the other threads */
+            if (this.wakeThreads(id)) {
+                return;
+            }
 
             do {
                 LockSupport.park();
-            } while (this.getSynchronizingThreadsVolatile() != 0);
-            return;
+            } while (this.getSynchronizingLockCountVolatile() == lockCount);
         }
-
-        /* We're potentially (see race condition below) the only thread currently running */
-        final long aloneThreads = this.getRequireAloneExecutionOpaque();
-        if (aloneThreads != 0) {
-            /* We are the only thread executing here */
-            /* Start exiting */
-            final int unpark = IntegerUtil.floorLog2(aloneThreads);
-            LockSupport.unpark(this.threads[unpark]);
-
-            do {
-                LockSupport.park();
-            } while (this.getSynchronizingThreadsVolatile() != 0);
-            return;
-        }
-
-        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing | bitfield, 0)) {
-            /* A thread calling end() has beaten us (race condition) to waking up all other threads */
-            return;
-        }
-
-        this.unparkAll(synchronizing);
     }
 
-    public void waitEnterExecuteAlone(final int id) {
-        if (this.aloneThreadRentryCount != 0) {
-            /* we are the alone thread executing and we are re-entrant safe */
-            ++this.aloneThreadRentryCount;
+    public void enterAlone(final int id) {
+        final long bitfield = 1L << id;
+
+        if (this.reEntryCount != 0) {
+            /* We are the alone thread executing */
+            ++this.reEntryCount;
             return;
         }
 
-        final long bitfield = 1L << id;
+        /* add to the alone thread execution list */
+        this.getAndOrAloneExecutionThreadsVolatile(bitfield);
 
-        final long x = this.getAndBitwiseOrRequireAloneExecutionVolatile(bitfield);
+        final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield);
 
+        if (synchronizing != this.getRunningThreadsVolatile()) {
+            /* Other threads are running */
+            do {
+                LockSupport.park();
+            } while ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0);
+            return;
+        }
+
+        /* potentially the only thread executing */
+        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
+            /* Lost cas, this means another alone thread could execute */
+            do {
+                LockSupport.park();
+            } while ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0);
+        } else {
+            /* won cas, it's our job to wake up the threads */
+            /* however that is postponed until this alone thread has finished its execution */
+            this.reEntryCount = 1; /* set this for re-entry checks */
+        }
     }
 
     public void endAloneExecution(final int id) {
-        if (--this.aloneThreadRentryCount != 0) {
-            /* we are the alone thread executing and we are re-entrant safe */
+        if (--this.reEntryCount != 0) {
+            /* still re-entrant */
             return;
         }
 
-        final long bitfield = 1L << id;
+        final int lockCount = this.getSynchronizingLockCountPlain();
 
-        /* Only unpark all synchronizing threads if no other thread wants to execute alone */
-        final long synchronizing = this.getSynchronizingThreadsOpaque();
-        final long alone = this.getRequireAloneExecutionOpaque();
-
-        if (alone == 0) {
-            this.unparkAll(synchronizing ^ bitfield);
+        if (this.wakeThreads(id)) {
+            /* synchronizing threads have been unparked */
             return;
         }
-
-        final int wake = IntegerUtil.floorLog2(alone);
-        this.setRequireAloneExecutionVolatile(wake ^ alone); // TODO volatile required?
-
-        LockSupport.unpark(this.threads[wake]);
 
         do {
             LockSupport.park();
-        } while (this.getSynchronizingThreadsVolatile() != 0);
+        } while (this.getStartLockCountVolatile() == lockCount);
     }
 }

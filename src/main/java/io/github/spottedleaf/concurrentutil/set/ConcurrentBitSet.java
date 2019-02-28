@@ -1,6 +1,7 @@
 package io.github.spottedleaf.concurrentutil.set;
 
 import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
+import io.github.spottedleaf.concurrentutil.util.ArrayUtil;
 
 import java.lang.invoke.VarHandle;
 
@@ -129,24 +130,6 @@ public abstract class ConcurrentBitSet {
 
         protected final long[] bitset;
 
-        protected static final VarHandle LONG_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(long[].class);
-
-        protected static long getLongVolatile(final long[] array, final int index) {
-            return (long)LONG_ARRAY_HANDLE.getVolatile(array, index);
-        }
-
-        protected static long getAndBitwiseOrVolatile(final long[] array, final int index, final long param) {
-            return (long)LONG_ARRAY_HANDLE.getAndBitwiseOr(array, index, param);
-        }
-
-        protected static long getAndBitwiseAndVolatile(final long[] array, final int index, final long param) {
-            return (long)LONG_ARRAY_HANDLE.getAndBitwiseAnd(array, index, param);
-        }
-
-        protected static long getAndBitwiseXorVolatile(final long[] array, final int index, final long param) {
-            return (long)LONG_ARRAY_HANDLE.getAndBitwiseXor(array, index, param);
-        }
-
         public LargeConcurrentBitset(final int maxBits) {
             if (maxBits <= 0) {
                 throw new IllegalArgumentException("Max bits must be positive");
@@ -172,7 +155,7 @@ public abstract class ConcurrentBitSet {
         public int bitsOn() {
             int ret = 0;
             for (int i = 0, len = this.bitset.length; i < len; ++i) {
-                ret += Long.bitCount(getLongVolatile(this.bitset, i));
+                ret += Long.bitCount(ArrayUtil.getVolatile(this.bitset, i));
             }
             return ret;
         }
@@ -194,7 +177,7 @@ public abstract class ConcurrentBitSet {
             final long bitfield = 1L << (bit & (Long.SIZE - 1));
             final int index = bit >>> 6; // bit / LONG.SIZE
 
-            return (getAndBitwiseOrVolatile(this.bitset, index, bitfield) & bitfield) != 0;
+            return (ArrayUtil.getAndOrVolatile(this.bitset, index, bitfield) & bitfield) != 0;
         }
 
         @Override
@@ -204,7 +187,7 @@ public abstract class ConcurrentBitSet {
             final long bitfield = 1L << (bit & (Long.SIZE - 1));
             final int index = bit >>> 6; // bit / LONG.SIZE
 
-            return (getAndBitwiseAndVolatile(this.bitset, index, ~bitfield) & bitfield) != 0;
+            return (ArrayUtil.getAndAndVolatile(this.bitset, index, ~bitfield) & bitfield) != 0;
         }
 
         @Override
@@ -214,7 +197,7 @@ public abstract class ConcurrentBitSet {
             final long bitfield = 1L << (bit & (Long.SIZE - 1));
             final int index = bit >>> 6; // bit / LONG.SIZE
 
-            return (getAndBitwiseXorVolatile(this.bitset, index, bitfield) & bitfield) != 0;
+            return (ArrayUtil.getAndXorVolatile(this.bitset, index, bitfield) & bitfield) != 0;
         }
     }
 
@@ -223,20 +206,6 @@ public abstract class ConcurrentBitSet {
         protected final int maxBits;
 
         protected final boolean[] bitset;
-
-        protected static final VarHandle BYTE_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(boolean[].class);
-
-        protected static boolean getBooleanVolatile(final boolean[] array, final int index) {
-            return (boolean)BYTE_ARRAY_HANDLE.getVolatile(array, index);
-        }
-
-        protected static boolean getAndSetBooleanVolatile(final boolean[] array, final int index, final boolean value) {
-            return (boolean)BYTE_ARRAY_HANDLE.getAndSet(array, index, value);
-        }
-
-        protected static boolean getAndBitwiseXorBooleanVolatile(final boolean[] array, final int index, final boolean value) {
-            return (boolean)BYTE_ARRAY_HANDLE.getAndBitwiseXor(array, index, value);
-        }
 
         public FastLargeConcurrentBitset(final int bits) {
             if (bits <= 0) {
@@ -267,7 +236,7 @@ public abstract class ConcurrentBitSet {
         public int bitsOn() {
             int ret = 0;
             for (int i = 0, len = this.maxBits; i < len; ++i) {
-                ret += getBooleanVolatile(this.bitset, getIndexForBit(i)) ? 1 : 0;
+                ret += ArrayUtil.getVolatile(this.bitset, getIndexForBit(i)) ? 1 : 0;
             }
             return ret;
         }
@@ -276,7 +245,7 @@ public abstract class ConcurrentBitSet {
         public boolean set(final int bit, final boolean value) {
             this.checkBit(bit);
 
-            return getAndSetBooleanVolatile(this.bitset, getIndexForBit(bit), value);
+            return ArrayUtil.getAndSetVolatile(this.bitset, getIndexForBit(bit), value);
         }
 
         @Override
@@ -293,12 +262,12 @@ public abstract class ConcurrentBitSet {
         public boolean flip(final int bit) {
             this.checkBit(bit);
 
-            return getAndBitwiseXorBooleanVolatile(this.bitset, getIndexForBit(bit), true);
+            return ArrayUtil.getAndXorVolatile(this.bitset, getIndexForBit(bit), true);
         }
 
         @Override
         public boolean get(final int bit) {
-            return getBooleanVolatile(this.bitset, getIndexForBit(bit));
+            return ArrayUtil.getVolatile(this.bitset, getIndexForBit(bit));
         }
     }
 }
