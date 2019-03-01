@@ -215,7 +215,7 @@ public final class ArrayUtil {
     }
 
     public static short getAndAddVolatile(final short[] array, final int index, final short param) {
-        return (short)BYTE_ARRAY_HANDLE.getAndAdd(array, index, param);
+        return (short)SHORT_ARRAY_HANDLE.getAndAdd(array, index, param);
     }
 
     public static short getAndAndVolatile(final short[] array, final int index, final short param) {
@@ -361,7 +361,7 @@ public final class ArrayUtil {
     }
 
     public static int getAndAddVolatile(final int[] array, final int index, final int param) {
-        return (int)BYTE_ARRAY_HANDLE.getAndAdd(array, index, param);
+        return (int)INT_ARRAY_HANDLE.getAndAdd(array, index, param);
     }
 
     public static int getAndAndVolatile(final int[] array, final int index, final int param) {
@@ -507,7 +507,7 @@ public final class ArrayUtil {
     }
 
     public static long getAndAddVolatile(final long[] array, final int index, final long param) {
-        return (long)BYTE_ARRAY_HANDLE.getAndAdd(array, index, param);
+        return (long)LONG_ARRAY_HANDLE.getAndAdd(array, index, param);
     }
 
     public static long getAndAndVolatile(final long[] array, final int index, final long param) {

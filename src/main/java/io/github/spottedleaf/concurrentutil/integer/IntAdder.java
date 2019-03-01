@@ -11,7 +11,7 @@ public class IntAdder extends Number {
     protected final int totalCells;
 
     protected static int getIndexFor(final int cellNumber) {
-        return (cellNumber + 1) * (ConcurrentUtil.CACHE_LINE_SIZE / Integer.BYTES);
+        return (cellNumber + 1) * ((2*ConcurrentUtil.CACHE_LINE_SIZE) / Integer.BYTES);
     }
 
     public IntAdder() {
@@ -54,7 +54,7 @@ public class IntAdder extends Number {
 
     public void addContended(final int value) {
         final ThreadLocalRandom random = ThreadLocalRandom.current();
-        final int cellIndex = getIndexFor(random.nextInt(this.totalCells));
+        final int cellIndex = random.nextInt(this.totalCells);
         final int[] cells = this.cells;
 
         ArrayUtil.getAndAddVolatileContended(cells, getIndexFor(cellIndex), value);
@@ -102,10 +102,10 @@ public class IntAdder extends Number {
 
         int sum;
 
-        ArrayUtil.setOpaque(cells, index, sum = ( ArrayUtil.getPlain(cells, index) + value));
+        ArrayUtil.setOpaque(cells, index, sum = (ArrayUtil.getPlain(cells, index) + value));
 
         for (int i = 1; i < totalCells; ++i) {
-            sum +=  ArrayUtil.getOpaque(cells, getIndexFor(i));
+            sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
         }
 
         return sum;
@@ -117,7 +117,7 @@ public class IntAdder extends Number {
         final int totalCells = this.totalCells;
         final int[] cells = this.cells;
         for (int i = 0; i < totalCells; ++i) {
-            sum +=  ArrayUtil.getOpaque(cells, getIndexFor(i));
+            sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
         }
 
         return sum;
