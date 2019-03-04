@@ -124,7 +124,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         if (capacity <= 32) {
             return 32;
         }
-        return Math.max(Integer.MIN_VALUE >>> 1, IntegerUtil.roundCeilLog2(capacity));
+        return Math.min(Integer.MIN_VALUE >>> 1, IntegerUtil.roundCeilLog2(capacity));
     }
 
     protected final int getSizePlain() {
