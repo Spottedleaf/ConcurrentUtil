@@ -11,7 +11,7 @@ public class IntAdder extends Number {
     protected final int totalCells;
 
     protected static int getIndexFor(final int cellNumber) {
-        return (cellNumber + 1) * ((2*ConcurrentUtil.CACHE_LINE_SIZE) / Integer.BYTES);
+        return (cellNumber + 1) * (ConcurrentUtil.CACHE_LINE_SIZE / Integer.BYTES);
     }
 
     public IntAdder() {
@@ -25,17 +25,28 @@ public class IntAdder extends Number {
 
         final int[] cells = new int[getIndexFor(totalCells + 1)];
 
-        cells[getIndexFor(0)] = initialValue; // final guarantees publish
+        ArrayUtil.setPlain(cells, getIndexFor(0), initialValue); // final guarantees publish
 
         this.totalCells = totalCells;
         this.cells = cells;
     }
 
+    protected final int checkCell(final int cell) {
+        if (cell < 0 || cell >= this.totalCells) {
+            throw new IllegalArgumentException("Cell is out of bounds [0, " + this.totalCells + "): " + cell);
+        }
+        return cell;
+    }
+
+    public final int getTotalCells() {
+        return this.totalCells;
+    }
+
     public int getAndAddContended(final int value) {
         final ThreadLocalRandom random = ThreadLocalRandom.current();
+        final int[] cells = this.cells;
         final int totalCells = this.totalCells;
         final int cellIndex = random.nextInt(totalCells);
-        final int[] cells = this.cells;
 
         int sum = 0;
 
@@ -54,27 +65,48 @@ public class IntAdder extends Number {
 
     public void addContended(final int value) {
         final ThreadLocalRandom random = ThreadLocalRandom.current();
-        final int cellIndex = random.nextInt(this.totalCells);
         final int[] cells = this.cells;
+        final int totalCells = this.totalCells;
 
-        ArrayUtil.getAndAddVolatileContended(cells, getIndexFor(cellIndex), value);
+        int failures = 0;
+
+        for (int cellIndex = random.nextInt(totalCells);; cellIndex = random.nextInt(totalCells)) {
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
+            final int rawIndex = getIndexFor(cellIndex);
+            final int curr = ArrayUtil.getVolatile(cells, rawIndex);
+            if (curr == ArrayUtil.compareAndExchangeVolatile(cells, rawIndex, curr, curr + value)) {
+                return;
+            }
+            ++failures;
+        }
+    }
+
+    public void addContended(final int value, final int cell) {
+        ArrayUtil.getAndAddVolatileContended(this.cells, getIndexFor(this.checkCell(cell)), value);
     }
 
     public int getAndAddUncontended(final int value) {
-        final ThreadLocalRandom random = ThreadLocalRandom.current();
-        final int totalCells = this.totalCells;
-        final int cellIndex = random.nextInt(totalCells);
+        return this.getAndAddUncontended(value, ThreadLocalRandom.current().nextInt(this.totalCells));
+    }
+
+    public int getAndAddUncontended(final int value, final int cell) {
+        this.checkCell(cell);
+
         final int[] cells = this.cells;
+        final int totalCells = this.totalCells;
 
         int sum = 0;
 
-        for (int i = 0; i < cellIndex; ++i) {
+        for (int i = 0; i < cell; ++i) {
             sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
         }
 
-        sum += ArrayUtil.getAndAddVolatile(cells, getIndexFor(cellIndex), value);
+        sum += ArrayUtil.getAndAddVolatile(cells, getIndexFor(cell), value);
 
-        for (int i = cellIndex + 1; i < totalCells; ++i) {
+        for (int i = cell + 1; i < totalCells; ++i) {
             sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
         }
 
@@ -88,23 +120,43 @@ public class IntAdder extends Number {
         ArrayUtil.getAndAddVolatile(this.cells, getIndexFor(cell), value);
     }
 
-    public void addOpaque(final int value) {
-        final int[] cells = this.cells;
-        final int index = getIndexFor(0);
+    public void addUncontended(final int value, final int cell) {
+        this.checkCell(cell);
 
-        ArrayUtil.setOpaque(cells, index, ArrayUtil.getPlain(cells, index) + value);
+        ArrayUtil.getAndAddVolatile(this.cells, getIndexFor(cell), value);
+    }
+
+    public void addOpaque(final int value) {
+        this.addOpaque(value, 0);
+    }
+
+    public void addOpaque(final int value, final int cell) {
+        final int[] cells = this.cells;
+        final int rawIndex = getIndexFor(this.checkCell(cell));
+
+        ArrayUtil.setOpaque(cells, rawIndex, ArrayUtil.getPlain(cells, rawIndex) + value);
     }
 
     public int getAndAddOpaque(final int value) {
-        final int totalCells = this.totalCells;
+        return this.getAndAddOpaque(value, 0);
+    }
+
+    public int getAndAddOpaque(final int value, final int cell) {
+        this.checkCell(cell);
+
         final int[] cells = this.cells;
-        final int index = getIndexFor(0);
+        final int totalCells = this.totalCells;
+        final int rawIndex = getIndexFor(cell);
 
-        int sum;
+        int sum = 0;
 
-        ArrayUtil.setOpaque(cells, index, sum = (ArrayUtil.getPlain(cells, index) + value));
+        for (int i = 0; i < cell; ++i) {
+            sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
+        }
 
-        for (int i = 1; i < totalCells; ++i) {
+        ArrayUtil.setOpaque(cells, rawIndex, sum += (ArrayUtil.getPlain(cells, rawIndex) + value));
+
+        for (int i = cell + 1; i < totalCells; ++i) {
             sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
         }
 
@@ -114,9 +166,19 @@ public class IntAdder extends Number {
     public int sumOpaque() {
         int sum = 0;
 
-        final int totalCells = this.totalCells;
         final int[] cells = this.cells;
-        for (int i = 0; i < totalCells; ++i) {
+        for (int i = 0, totalCells = this.totalCells; i < totalCells; ++i) {
+            sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
+        }
+
+        return sum;
+    }
+
+    public long longSumOpaque() {
+        long sum = 0;
+
+        final int[] cells = this.cells;
+        for (int i = 0, totalCells = this.totalCells; i < totalCells; ++i) {
             sum += ArrayUtil.getOpaque(cells, getIndexFor(i));
         }
 
@@ -126,10 +188,20 @@ public class IntAdder extends Number {
     public int sum() {
         int sum = 0;
 
-        final int totalCells = this.totalCells;
         final int[] cells = this.cells;
-        for (int i = 0; i < totalCells; ++i) {
+        for (int i = 0, totalCells = this.totalCells; i < totalCells; ++i) {
             sum +=  ArrayUtil.getVolatile(cells, getIndexFor(i));
+        }
+
+        return sum;
+    }
+
+    public long longSum() {
+        long sum = 0;
+
+        final int[] cells = this.cells;
+        for (int i = 0, totalCells = this.totalCells; i < totalCells; ++i) {
+            sum += ArrayUtil.getVolatile(cells, getIndexFor(i));
         }
 
         return sum;
@@ -140,7 +212,7 @@ public class IntAdder extends Number {
      */
     @Override
     public long longValue() {
-        return (long)this.sum();
+        return this.longSum();
     }
 
     /**

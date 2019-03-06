@@ -16,6 +16,8 @@ public final class ArrayUtil {
 
     public static final VarHandle LONG_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(long[].class);
 
+    public static final VarHandle OBJECT_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(Object[].class);
+
     /* byte array */
 
     public static byte getPlain(final byte[] array, final int index) {
@@ -714,6 +716,92 @@ public final class ArrayUtil {
         int failures = 0;
 
         for (boolean curr = getVolatile(array, index);;++failures) {
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
+            if (curr == (curr = compareAndExchangeVolatileContended(array, index, curr, param))) {
+                return curr;
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T getPlain(final T[] array, final int index) {
+        final Object ret = OBJECT_ARRAY_HANDLE.get((Object[])array, index);
+        return (T)ret;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T getOpaque(final T[] array, final int index) {
+        final Object ret = OBJECT_ARRAY_HANDLE.getOpaque((Object[])array, index);
+        return (T)ret;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T getAcquire(final T[] array, final int index) {
+        final Object ret = OBJECT_ARRAY_HANDLE.getAcquire((Object[])array, index);
+        return (T)ret;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T getVolatile(final T[] array, final int index) {
+        final Object ret = OBJECT_ARRAY_HANDLE.getVolatile((Object[])array, index);
+        return (T)ret;
+    }
+
+    public static <T> void setPlain(final T[] array, final int index, final T value) {
+        OBJECT_ARRAY_HANDLE.set((Object[])array, index, (Object)value);
+    }
+
+    public static <T> void setOpaque(final T[] array, final int index, final T value) {
+        OBJECT_ARRAY_HANDLE.setOpaque((Object[])array, index, (Object)value);
+    }
+
+    public static <T> void setRelease(final T[] array, final int index, final T value) {
+        OBJECT_ARRAY_HANDLE.setRelease((Object[])array, index, (Object)value);
+    }
+
+    public static <T> void setVolatile(final T[] array, final int index, final T value) {
+        OBJECT_ARRAY_HANDLE.setVolatile((Object[])array, index, (Object)value);
+    }
+
+    public static <T> void setVolatileContended(final T[] array, final int index, final T param) {
+        int failures = 0;
+
+        for (T curr = getVolatile(array, index);;++failures) {
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
+            if (curr == (curr = compareAndExchangeVolatileContended(array, index, curr, param))) {
+                return;
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T compareAndExchangeVolatile(final T[] array, final int index, final T expect, final T update) {
+        final Object ret = OBJECT_ARRAY_HANDLE.compareAndExchange((Object[])array, index, (Object)expect, (Object)update);
+        return (T)ret;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T getAndSetVolatile(final T[] array, final int index, final T param) {
+        final Object ret = BYTE_ARRAY_HANDLE.getAndSet((Object[])array, index, (Object)param);
+        return (T)ret;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static <T> T compareAndExchangeVolatileContended(final T[] array, final int index, final T expect, final T update) {
+        final Object ret = OBJECT_ARRAY_HANDLE.compareAndExchange((Object[])array, index, (Object)expect, (Object)update);
+        return (T)ret;
+    }
+
+    public static <T> T getAndSetVolatileContended(final T[] array, final int index, final T param) {
+        int failures = 0;
+
+        for (T curr = getVolatile(array, index);;++failures) {
             for (int i = 0; i < failures; ++i) {
                 ConcurrentUtil.pause();
             }

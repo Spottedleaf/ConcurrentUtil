@@ -1,6 +1,7 @@
 package io.github.spottedleaf.concurrentutil.map;
 
 import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
+import io.github.spottedleaf.concurrentutil.util.ArrayUtil;
 import io.github.spottedleaf.concurrentutil.util.IntegerUtil;
 
 import java.lang.invoke.VarHandle;
@@ -40,7 +41,44 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
     protected static final VarHandle SIZE_HANDLE = ConcurrentUtil.getVarHandle(SingleWriterMultiReaderHashMap.class, "size", int.class);
     protected static final VarHandle TABLE_HANDLE = ConcurrentUtil.getVarHandle(SingleWriterMultiReaderHashMap.class, "table", TableEntry[].class);
-    protected static final VarHandle TABLE_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(TableEntry[].class);
+
+    /* size */
+
+    protected final int getSizePlain() {
+        return (int)SIZE_HANDLE.get(this);
+    }
+
+    protected final int getSizeOpaque() {
+        return (int)SIZE_HANDLE.getOpaque(this);
+    }
+
+    protected final void setSizePlain(final int value) {
+        SIZE_HANDLE.set(this, value);
+    }
+
+    protected final void setSizeOpaque(final int value) {
+        SIZE_HANDLE.setOpaque(this, value);
+    }
+
+    /* table */
+
+    protected final TableEntry<K, V>[] getTablePlain() {
+        //noinspection unchecked
+        return (TableEntry<K, V>[])TABLE_HANDLE.get(this);
+    }
+
+    protected final TableEntry<K, V>[] getTableAcquire() {
+        //noinspection unchecked
+        return (TableEntry<K, V>[])TABLE_HANDLE.getAcquire(this);
+    }
+
+    protected final void setTablePlain(final TableEntry<K, V>[] table) {
+        TABLE_HANDLE.set(this, table);
+    }
+
+    protected final void setTableRelease(final TableEntry<K, V>[] table) {
+        TABLE_HANDLE.setRelease(this, table);
+    }
 
     /**
      * Constructs this map with a capacity of {@code 32} and load factor of {@code 0.75f}.
@@ -127,59 +165,12 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         return Math.min(Integer.MIN_VALUE >>> 1, IntegerUtil.roundCeilLog2(capacity));
     }
 
-    protected final int getSizePlain() {
-        return (int)SIZE_HANDLE.get(this);
-    }
-
-    protected final int getSizeOpaque() {
-        return (int)SIZE_HANDLE.getOpaque(this);
-    }
-
-    protected final void setSizeOpaque(final int value) {
-        SIZE_HANDLE.setOpaque(this, value);
-    }
-
-    protected final void setSizePlain(final int value) {
-        SIZE_HANDLE.set(this, value);
-    }
-
-    protected final void setTablePlain(final TableEntry<K, V>[] table) {
-        TABLE_HANDLE.set(this, table);
-    }
-
-    protected final void setTableRelease(final TableEntry<K, V>[] table) {
-        TABLE_HANDLE.setRelease(this, table);
-    }
-
-    protected final TableEntry<K, V>[] getTablePlain() {
-        //noinspection unchecked
-        return (TableEntry<K, V>[])TABLE_HANDLE.get(this);
-    }
-
-    protected final TableEntry<K, V>[] getTableAcquire() {
-        //noinspection unchecked
-        return (TableEntry<K, V>[])TABLE_HANDLE.getAcquire(this);
-    }
-
-    protected static <K, V> TableEntry<K, V> getEntryAtIndexOpaque(final TableEntry<K, V>[] table, final int index) {
-        //noinspection unchecked
-        return (TableEntry<K, V>)TABLE_ARRAY_HANDLE.getOpaque(table, index);
-    }
-
-    protected static <K, V> void setEntryAtIndexRelease(final TableEntry<K, V>[] table, final int index, final TableEntry<K, V> set) {
-        TABLE_ARRAY_HANDLE.setRelease(table, index, set);
-    }
-
-    protected static <K, V> void setEntryAtIndexOpaque(final TableEntry<K, V>[] table, final int index, final TableEntry<K, V> set) {
-        TABLE_ARRAY_HANDLE.setOpaque(table, index, set);
-    }
-
     /** Callers must still use acquire when reading the value of the entry. */
     protected final TableEntry<K, V> getEntryForOpaque(final K key) {
         final int hash = this.getHash(key);
         final TableEntry<K, V>[] table = this.getTableAcquire();
 
-        for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, hash & (table.length - 1));
+        for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, hash & (table.length - 1));
              curr != null; curr = curr.getNextOpaque()) {
 
             if (hash == curr.hash && (key == curr.key || curr.key.equals(key))) {
@@ -229,7 +220,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         final TableEntry<K, V>[] table = this.getTableAcquire();
 
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i);
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i);
                  curr != null; curr = curr.getNextOpaque()) {
 
                 final V value = curr.getValueAcquire();
@@ -257,7 +248,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         final TableEntry<K, V>[] table = this.getTableAcquire();
 
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i);
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i);
                     curr != null; curr = curr.getNextOpaque()) {
 
                 final V value = curr.getValueAcquire();
@@ -310,7 +301,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     public void forEach(final Consumer<? super Entry<K, V>> action) {
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
                 action.accept(curr);
             }
         }
@@ -323,7 +314,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     public void forEach(final BiConsumer<? super K, ? super V> action) {
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
 
                 final V value = curr.getValueAcquire();
                 if (value == null) {
@@ -352,7 +343,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     public void forEachKey(final Consumer<? super K> action) {
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
                 action.accept(curr.key);
             }
         }
@@ -365,7 +356,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     public void forEachValue(final Consumer<? super V> action) {
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
                 final V value = curr.getValueAcquire();
                 if (value == null) {
                     continue;
@@ -431,7 +422,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         }
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
-            for (TableEntry<K, V> curr = SingleWriterMultiReaderHashMap.getEntryAtIndexOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
+            for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
                 final V currVal = curr.getValueAcquire();
                 if (currVal != null && (currVal == value || currVal.equals(value))) {
                     return true;
@@ -574,7 +565,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         if (head == null) {
             final TableEntry<K, V> insert = new TableEntry<>(hash, key, value);
             this.addToSzie(1);
-            SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, insert);
+            ArrayUtil.setRelease(table, index, insert);
             return null;
         }
 
@@ -627,7 +618,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
                 ++removed;
                 this.removeFromSizePlain(1); /* required in case predicate throws an exception */
 
-                SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, i, curr = curr.getNextPlain());
+                ArrayUtil.setRelease(table, i, curr = curr.getNextPlain());
 
                 if (curr == null) {
                     continue bin_iteration_loop;
@@ -677,7 +668,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
                 ++removed;
                 this.removeFromSizePlain(1); /* required in case predicate throws an exception */
 
-                SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, i, curr = curr.getNextPlain());
+                ArrayUtil.setRelease(table, i, curr = curr.getNextPlain());
 
                 if (curr == null) {
                     continue bin_iteration_loop;
@@ -746,7 +737,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             }
 
             this.removeFromSize(1);
-            SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, head.getNextPlain());
+            ArrayUtil.setRelease(table, index, head.getNextPlain());
 
             return true;
         }
@@ -780,7 +771,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         if (hash == head.hash && (head.key == key || head.key.equals(key))) {
             this.removeFromSize(1);
-            SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, head.getNextPlain());
+            ArrayUtil.setRelease(table, index, head.getNextPlain());
 
             return head.getValuePlain();
         }
@@ -903,7 +894,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     public void clear() {
         final TableEntry<K, V>[] table = this.getTablePlain();
         for (int i = 0, len = table.length; i < len; ++i) {
-            SingleWriterMultiReaderHashMap.setEntryAtIndexOpaque(table, i, null);
+            ArrayUtil.setOpaque(table, i, null);
         }
         this.setSizeOpaque(0);
         VarHandle.releaseFence();
@@ -937,7 +928,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
                 final TableEntry<K, V> insert = new TableEntry<>(hash, key, newVal);
                 if (prev == null) {
-                    SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, insert);
+                    ArrayUtil.setRelease(table, index, insert);
                 } else {
                     prev.setNextRelease(insert);
                 }
@@ -956,7 +947,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
                 this.removeFromSize(1);
 
                 if (prev == null) {
-                    SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, curr.getNextPlain());
+                    ArrayUtil.setRelease(table, index, curr.getNextPlain());
                 } else {
                     prev.setNextRelease(curr.getNextPlain());
                 }
@@ -996,7 +987,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             this.removeFromSize(1);
 
             if (prev == null) {
-                SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, curr.getNextPlain());
+                ArrayUtil.setRelease(table, index, curr.getNextPlain());
             } else {
                 prev.setNextRelease(curr.getNextPlain());
             }
@@ -1041,7 +1032,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
             final TableEntry<K, V> insert = new TableEntry<>(hash, key, newVal);
             if (prev == null) {
-                SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, insert);
+                ArrayUtil.setRelease(table, index, insert);
             } else {
                 prev.setNextRelease(insert);
             }
@@ -1076,7 +1067,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
                 final TableEntry<K, V> insert = new TableEntry<>(hash, key, value);
                 if (prev == null) {
-                    SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, insert);
+                    ArrayUtil.setRelease(table, index, insert);
                 } else {
                     prev.setNextRelease(insert);
                 }
@@ -1095,7 +1086,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
                 this.removeFromSize(1);
 
                 if (prev == null) {
-                    SingleWriterMultiReaderHashMap.setEntryAtIndexRelease(table, index, curr.getNextPlain());
+                    ArrayUtil.setRelease(table, index, curr.getNextPlain());
                 } else {
                     prev.setNextRelease(curr.getNextPlain());
                 }
@@ -1116,15 +1107,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         protected static final VarHandle VALUE_HANDLE = ConcurrentUtil.getVarHandle(TableEntry.class, "value", Object.class);
         protected static final VarHandle NEXT_HANDLE = ConcurrentUtil.getVarHandle(TableEntry.class, "next", TableEntry.class);
 
-        protected TableEntry(final int hash, final K key, final V value) {
-            this.hash = hash;
-            this.key = key;
-            this.value = value;
-        }
-
-        protected final void setValueRelease(final V to) {
-            VALUE_HANDLE.setRelease(this, to);
-        }
+        /* value */
 
         protected final V getValuePlain() {
             //noinspection unchecked
@@ -1136,22 +1119,34 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             return (V)VALUE_HANDLE.getAcquire(this);
         }
 
-        protected final TableEntry<K, V> getNextOpaque() {
-            //noinspection unchecked
-            return (TableEntry<K, V>)NEXT_HANDLE.getOpaque(this);
+        protected final void setValueRelease(final V to) {
+            VALUE_HANDLE.setRelease(this, to);
         }
+
+        /* next */
 
         protected final TableEntry<K, V> getNextPlain() {
             //noinspection unchecked
             return (TableEntry<K, V>)NEXT_HANDLE.get(this);
         }
 
-        protected final void setNextRelease(final TableEntry<K, V> next) {
-            NEXT_HANDLE.setRelease(this, next);
+        protected final TableEntry<K, V> getNextOpaque() {
+            //noinspection unchecked
+            return (TableEntry<K, V>)NEXT_HANDLE.getOpaque(this);
         }
 
         protected final void setNextPlain(final TableEntry<K, V> next) {
             NEXT_HANDLE.set(this, next);
+        }
+
+        protected final void setNextRelease(final TableEntry<K, V> next) {
+            NEXT_HANDLE.setRelease(this, next);
+        }
+
+        protected TableEntry(final int hash, final K key, final V value) {
+            this.hash = hash;
+            this.key = key;
+            this.value = value;
         }
 
         /**
