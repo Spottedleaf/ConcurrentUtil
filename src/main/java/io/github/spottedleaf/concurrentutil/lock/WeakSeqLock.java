@@ -4,6 +4,12 @@ import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
 
 import java.lang.invoke.VarHandle;
 
+/**
+ * SeqLock implementation offering the bare minimum required by the {@link SeqLock} specification.
+ * WeakSeqLocks cannot be used concurrently with multiple writer threads. As such, {@link #acquireWrite()} has
+ * the same effect as calling {@link #tryAcquireWrite()}. Writes are not guaranteed to be published immediately, and
+ * loads can be re-ordered across write lock handling.
+ */
 public class WeakSeqLock implements SeqLock {
 
     protected int lock;
@@ -22,6 +28,13 @@ public class WeakSeqLock implements SeqLock {
         LOCK_HANDLE.setOpaque(this, value);
     }
 
+    public WeakSeqLock() {
+        VarHandle.storeStoreFence();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void acquireWrite() {
         final int lock = this.getLockPlain();
@@ -29,12 +42,18 @@ public class WeakSeqLock implements SeqLock {
         VarHandle.storeStoreFence();
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public boolean tryAcquireWrite() {
         this.acquireWrite();
         return true;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public void releaseWrite() {
         final int lock = this.getLockPlain();
@@ -42,15 +61,19 @@ public class WeakSeqLock implements SeqLock {
         this.setLockOpaque(lock + 1);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
-    public int tryAcquireRead() {
-        final int lock = this.getLockOpaque();
-
-        VarHandle.loadLoadFence();
-
-        return lock;
+    public void abortWrite() {
+        final int lock = this.getLockPlain();
+        VarHandle.storeStoreFence();
+        this.setLockOpaque(lock ^ 1);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
     public int acquireRead() {
         int failures = 0;
@@ -71,10 +94,22 @@ public class WeakSeqLock implements SeqLock {
         return curr;
     }
 
+    /**
+     * {@inheritDoc}
+     */
     @Override
-    public boolean checkRead(final int read) {
+    public boolean tryReleaseRead(final int read) {
         VarHandle.loadLoadFence();
-
         return this.getLockOpaque() == read;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public int getSequentialCounter() {
+        final int lock = this.getLockOpaque();
+        VarHandle.loadLoadFence();
+        return lock;
     }
 }
