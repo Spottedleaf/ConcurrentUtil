@@ -2,6 +2,7 @@ package ca.spottedleaf.concurrentutil.map;
 
 import ca.spottedleaf.concurrentutil.ConcurrentUtil;
 import ca.spottedleaf.concurrentutil.util.ArrayUtil;
+import ca.spottedleaf.concurrentutil.util.CollectionUtil;
 import ca.spottedleaf.concurrentutil.util.IntegerUtil;
 
 import java.lang.invoke.VarHandle;
@@ -1282,7 +1283,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         }
     }
 
-    protected static class ValueIterator<K, V> extends TableEntryIterator<K, V, V> {
+    protected static final class ValueIterator<K, V> extends TableEntryIterator<K, V, V> {
 
         protected V nextValue;
 
@@ -1438,6 +1439,11 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             }
             return hash;
         }
+
+        @Override
+        public Spliterator<T> spliterator() { // TODO implement
+            return Spliterators.spliterator(this, Spliterator.NONNULL);
+        }
     }
 
     protected static abstract class ViewSet<K, V, T> extends ViewCollection<K, V, T> implements Set<T> {
@@ -1526,8 +1532,10 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             return this.map.contains(key, value);
         }
 
-        // TODO Stream/Splitterators
-        // TODO toString
+        @Override
+        public String toString() {
+            return CollectionUtil.toString(this, "SingleWriterMultiReaderHashMap EntrySet");
+        }
     }
 
     protected static final class ValueCollection<K, V> extends ViewSet<K, V, V> implements Collection<V> {
@@ -1578,8 +1586,10 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             }) != 0;
         }
 
-        // TODO Stream/Splitterators
-        // TODO toString
+        @Override
+        public String toString() {
+            return CollectionUtil.toString(this, "SingleWriterMultiReaderHashMap Values");
+        }
     }
 
     protected static final class KeySet<K, V> extends ViewCollection<K, V, K> implements Set<K> {
@@ -1622,7 +1632,9 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             }) != 0;
         }
 
-        // TODO Stream/Splitterators
-        // TODO equals/toString
+        @Override
+        public String toString() {
+            return CollectionUtil.toString(this, "SingleWriterMultiReaderHashMap KeySet");
+        }
     }
 }

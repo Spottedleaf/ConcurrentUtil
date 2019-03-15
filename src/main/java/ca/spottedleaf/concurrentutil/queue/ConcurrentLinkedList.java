@@ -865,6 +865,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             LinkedNode<E> next = curr.getNextAcquire();
 
             if (next == curr) {
+                /* Add-locked nodes always have a null value */
                 break;
             }
 
@@ -880,7 +881,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
                 consumer.accept(currentVal);
             } catch (final Exception ex) {
                 this.setHeadOpaque(next != null ? next : curr); /* Avoid perf penalty (of reiterating) if the exception handler decides to re-throw */
-                curr.setElementOpaque(null);
+                curr.setElementOpaque(null); /* set here, we might re-throw */
 
                 exceptionHandler.accept(ex);
             }
@@ -907,6 +908,12 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             this.setHeadOpaque(curr); /* While this may be a plain write, eventually publish it for methods such as find. */
         }
         return total;
+    }
+
+    @Override
+    public Spliterator<E> spliterator() { // TODO implement
+        return Spliterators.spliterator(this, Spliterator.CONCURRENT |
+                Spliterator.NONNULL | Spliterator.ORDERED);
     }
 
     protected static final class LinkedNode<E> {
