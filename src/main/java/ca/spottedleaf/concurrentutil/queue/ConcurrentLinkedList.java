@@ -1,7 +1,7 @@
-package io.github.spottedleaf.concurrentutil.queue;
+package ca.spottedleaf.concurrentutil.queue;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
-import io.github.spottedleaf.concurrentutil.util.Throw;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.util.Throw;
 
 import java.lang.invoke.VarHandle;
 import java.util.*;
@@ -21,10 +21,10 @@ import java.util.function.Predicate;
  */
 public class ConcurrentLinkedList<E> implements Queue<E> {
 
-    //@jdk.internal.vm.annotation.Contended
+    @jdk.internal.vm.annotation.Contended
     protected volatile LinkedNode<E> head; /* Always non-null, high chance of being the actual head */
 
-    //@jdk.internal.vm.annotation.Contended
+    @jdk.internal.vm.annotation.Contended
     protected volatile LinkedNode<E> tail; /* Always non-null, high chance of being the actual tail */
 
     /* Note that it is possible to reach head from tail. */

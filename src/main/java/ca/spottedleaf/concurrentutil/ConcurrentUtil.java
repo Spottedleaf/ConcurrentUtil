@@ -1,6 +1,6 @@
-package io.github.spottedleaf.concurrentutil;
+package ca.spottedleaf.concurrentutil;
 
-import io.github.spottedleaf.concurrentutil.util.Throw;
+import ca.spottedleaf.concurrentutil.util.Throw;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;

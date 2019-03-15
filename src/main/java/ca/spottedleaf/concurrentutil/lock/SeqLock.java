@@ -1,4 +1,4 @@
-package io.github.spottedleaf.concurrentutil.lock;
+package ca.spottedleaf.concurrentutil.lock;
 
 import java.lang.invoke.VarHandle;
 
@@ -22,7 +22,7 @@ import java.lang.invoke.VarHandle;
  * </p>
  *
  * <p>
- * When SeqLocks are created, they will use a {@link VarHandle#storeStoreFence() STORE-STORE} to prevent re-ordering
+ * When SeqLocks are created, they will use a {@link VarHandle#storeStoreFence() STORE-STORE} fence to prevent re-ordering
  * of writes to shared data that occur before a SeqLock is created.
  * </p>
  *
@@ -161,7 +161,7 @@ public interface SeqLock {
      * <p>
      * Checks if the current sequential counter is equal to the specified counter. It is required that the counter is
      * read with opaque or higher access. This function is guaranteed to use at least a {@link VarHandle#loadLoadFence() LOAD-LOAD}
-     * fence before reading the current counter, although it can use a stronger fence, or volatile access for thread.
+     * fence before reading the current counter, although it can use a stronger fence, or volatile access for the read.
      * </p>
      * @param read The specified counter.
      * @return {@code true} if the current sequential counter is equal to the specified counter, {@code false} otherwise.

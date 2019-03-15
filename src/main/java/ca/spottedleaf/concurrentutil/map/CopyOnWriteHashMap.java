@@ -1,6 +1,6 @@
-package io.github.spottedleaf.concurrentutil.map;
+package ca.spottedleaf.concurrentutil.map;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
 
 import java.lang.invoke.VarHandle;
 import java.util.*;
@@ -27,6 +27,10 @@ public class CopyOnWriteHashMap<K, V> implements ConcurrentMap<K, V> {
         return (HashMap<K, V>)MAP_HANDLE.get(this);
     }
 
+    protected final void setMapPlain(final HashMap<K, V> map) {
+        MAP_HANDLE.set(map);
+    }
+
     /**
      * Constructs this map with a capacity of {@code 16} and load factor of {@code 0.75f}.
      */
@@ -40,8 +44,13 @@ public class CopyOnWriteHashMap<K, V> implements ConcurrentMap<K, V> {
      * @param loadFactor Load factor, > 0
      */
     public CopyOnWriteHashMap(final int capacity, final float loadFactor) {
-        this.map = new HashMap<>(capacity, loadFactor);
+        this(new HashMap<>(capacity, loadFactor), loadFactor);
+    }
+
+    CopyOnWriteHashMap(final HashMap<K, V> map, final float loadFactor) {
+        this.setMapPlain(map);
         this.loadFactor = loadFactor;
+        VarHandle.storeStoreFence();
     }
 
     /* no copy */
@@ -86,6 +95,8 @@ public class CopyOnWriteHashMap<K, V> implements ConcurrentMap<K, V> {
         return this.map.get(key);
     }
 
+
+    // TODO these are dumb, fix
     /**
      * <p>
      * The returned collection is unmodifiable and represents a snapshot of this map during some point in
@@ -160,10 +171,7 @@ public class CopyOnWriteHashMap<K, V> implements ConcurrentMap<K, V> {
     @Override
     public void clear() {
         synchronized (this) {
-            //noinspection unchecked
-            final HashMap<K, V> clone = (HashMap<K, V>) this.getMapPlain().clone();
-            clone.clear();
-            this.map = clone;
+            this.map = new HashMap<>(this.getMapPlain().size(), this.loadFactor);
         }
     }
 
@@ -198,9 +206,15 @@ public class CopyOnWriteHashMap<K, V> implements ConcurrentMap<K, V> {
             final HashMap<K, V> clone = (HashMap<K, V>) this.getMapPlain().clone();
 
             for (final Map.Entry<? extends K, ? extends V> entry : map.entrySet()) {
+                final K key;
+                final V value;
                 try {
-                    clone.put(entry.getKey(), entry.getValue());
-                } catch (final IllegalStateException ignore) {} // iff an entry in the map param is removed concurrently
+                    key = entry.getKey();
+                    value = entry.getValue();
+                } catch (final IllegalStateException ignore) {
+                    continue; // iff an entry in the map param is removed concurrently
+                }
+                clone.put(key, value);
             }
 
             this.map = clone;
@@ -452,5 +466,18 @@ public class CopyOnWriteHashMap<K, V> implements ConcurrentMap<K, V> {
             }
         }
         return ret;
+    }
+
+    /**
+     * Copies the internal map data to a non-thread-safe map.
+     * @return The copy
+     */
+    @SuppressWarnings("unchecked")
+    public Map<K, V> createCopy() {
+        return (Map<K, V>)this.map.clone();
+    }
+
+    public CopyOnWriteHashMap<K, V> clone() {
+        return new CopyOnWriteHashMap<>(this.map, this.loadFactor);
     }
 }

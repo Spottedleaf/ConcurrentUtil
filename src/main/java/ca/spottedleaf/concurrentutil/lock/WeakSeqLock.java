@@ -1,6 +1,6 @@
-package io.github.spottedleaf.concurrentutil.lock;
+package ca.spottedleaf.concurrentutil.lock;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
 
 import java.lang.invoke.VarHandle;
 

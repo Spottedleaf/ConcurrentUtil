@@ -1,7 +1,7 @@
-package io.github.spottedleaf.concurrentutil.integer;
+package ca.spottedleaf.concurrentutil.integer;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
-import io.github.spottedleaf.concurrentutil.util.ArrayUtil;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.util.ArrayUtil;
 
 import java.util.concurrent.ThreadLocalRandom;
 

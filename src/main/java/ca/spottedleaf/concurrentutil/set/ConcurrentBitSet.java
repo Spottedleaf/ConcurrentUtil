@@ -1,11 +1,11 @@
-package io.github.spottedleaf.concurrentutil.set;
+package ca.spottedleaf.concurrentutil.set;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
-import io.github.spottedleaf.concurrentutil.util.ArrayUtil;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.util.ArrayUtil;
 
 import java.lang.invoke.VarHandle;
 
-public abstract class ConcurrentBitSet {
+public interface ConcurrentBitSet {
 
     public static ConcurrentBitSet of(final int bits) {
         if (bits <= 0) {
@@ -16,15 +16,15 @@ public abstract class ConcurrentBitSet {
 
     // TODO add contended versions
 
-    public abstract boolean get(final int bit);
-    public abstract boolean setOn(final int bit); //ret prev
-    public abstract boolean setOff(final int bit); //ret prev
-    public abstract boolean flip(final int bit); //ret prev
+    boolean get(final int bit);
+    boolean setOn(final int bit); //ret prev
+    boolean setOff(final int bit); //ret prev
+    boolean flip(final int bit); //ret prev
 
-    public abstract int totalBits();
-    public abstract int bitsOn();
+    int totalBits();
+    int bitsOn();
 
-    public boolean set(final int bit, final boolean value) {
+    default public boolean set(final int bit, final boolean value) {
         if (value) {
             return this.setOn(bit);
         } else {
@@ -32,7 +32,7 @@ public abstract class ConcurrentBitSet {
         }
     }
 
-    public static class SmallConcurrentBitSet extends ConcurrentBitSet {
+    public static class SmallConcurrentBitSet implements ConcurrentBitSet {
 
         protected final int maxBits;
 
@@ -42,6 +42,10 @@ public abstract class ConcurrentBitSet {
 
         protected final long getBitsetVolatile() {
             return (long)BITSET_HANDLE.getVolatile(this);
+        }
+
+        protected final void setBitsetRelease(final long value) {
+            BITSET_HANDLE.setRelease(this, value);
         }
 
         protected final void setBitsetVolatile(final long value) {
@@ -69,7 +73,7 @@ public abstract class ConcurrentBitSet {
 
         public SmallConcurrentBitSet(final int maxBits, final long initState) {
             this(maxBits);
-            this.setBitsetVolatile(initState);
+            this.setBitsetRelease(initState);
         }
 
         protected final void checkBit(final int bit) {
@@ -124,7 +128,7 @@ public abstract class ConcurrentBitSet {
         }
     }
 
-    public static class LargeConcurrentBitset extends ConcurrentBitSet {
+    public static class LargeConcurrentBitset implements ConcurrentBitSet {
 
         protected final int maxBits;
 
@@ -201,7 +205,7 @@ public abstract class ConcurrentBitSet {
         }
     }
 
-    public static class FastLargeConcurrentBitset extends ConcurrentBitSet {
+    public static class FastLargeConcurrentBitset implements ConcurrentBitSet {
 
         protected final int maxBits;
 

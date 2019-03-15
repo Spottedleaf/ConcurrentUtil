@@ -1,6 +1,6 @@
-package io.github.spottedleaf.concurrentutil.util;
+package ca.spottedleaf.concurrentutil.util;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
 
 import java.lang.invoke.VarHandle;
 
@@ -17,6 +17,10 @@ public final class ArrayUtil {
     public static final VarHandle LONG_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(long[].class);
 
     public static final VarHandle OBJECT_ARRAY_HANDLE = ConcurrentUtil.getArrayHandle(Object[].class);
+
+    private ArrayUtil() {
+        throw new RuntimeException();
+    }
 
     /* byte array */
 

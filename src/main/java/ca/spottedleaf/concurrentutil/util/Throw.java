@@ -1,4 +1,4 @@
-package io.github.spottedleaf.concurrentutil.util;
+package ca.spottedleaf.concurrentutil.util;
 
 public final class Throw {
 
@@ -7,7 +7,7 @@ public final class Throw {
      */
     @SuppressWarnings("unchecked")
     public static <T extends Throwable> void rethrow(final Throwable throwable) throws T {
-        throw (T) throwable;
+        throw (T)throwable;
     }
 
     private Throw() {

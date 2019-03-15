@@ -1,8 +1,8 @@
-package io.github.spottedleaf.concurrentutil.map;
+package ca.spottedleaf.concurrentutil.map;
 
-import io.github.spottedleaf.concurrentutil.ConcurrentUtil;
-import io.github.spottedleaf.concurrentutil.util.ArrayUtil;
-import io.github.spottedleaf.concurrentutil.util.IntegerUtil;
+import ca.spottedleaf.concurrentutil.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.util.ArrayUtil;
+import ca.spottedleaf.concurrentutil.util.IntegerUtil;
 
 import java.lang.invoke.VarHandle;
 import java.util.*;
@@ -167,7 +167,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
     /** Callers must still use acquire when reading the value of the entry. */
     protected final TableEntry<K, V> getEntryForOpaque(final K key) {
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTableAcquire();
 
         for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, hash & (table.length - 1));
@@ -182,7 +182,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     }
 
     protected final TableEntry<K, V> getEntryForPlain(final K key) {
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
 
         for (TableEntry<K, V> curr = table[hash & (table.length - 1)]; curr != null; curr = curr.getNextPlain()) {
@@ -198,8 +198,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     /* MT-Safe */
 
     /** must be deterministic given a key */
-    protected int getHash(final K key) {
-        return key.hashCode();
+    protected static int getHash(final Object key) {
+        return IntegerUtil.hash0(key.hashCode());
     }
 
     /**
@@ -558,7 +558,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         }
 
         final TableEntry<K, V>[] table = this.getTablePlain();
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final int index = (table.length - 1) & hash;
 
         final TableEntry<K, V> head = table[index];
@@ -720,8 +720,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
         }
 
         final TableEntry<K, V>[] table = this.getTablePlain();
-        //noinspection unchecked
-        final int hash = this.getHash((K)key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final int index = (table.length - 1) & hash;
 
         final TableEntry<K, V> head = table[index];
@@ -796,8 +795,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             throw new NullPointerException("key is null");
         }
 
-        //noinspection unchecked
-        return this.remove(key, this.getHash((K)key));
+        return this.remove(key, SingleWriterMultiReaderHashMap.getHash(key));
     }
 
     /**
@@ -912,7 +910,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             throw new NullPointerException("remappingFunction is null");
         }
 
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
         final int index = hash & (table.length - 1);
 
@@ -969,7 +967,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             throw new NullPointerException("remappingFunction is null");
         }
 
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
         final int index = hash & (table.length - 1);
 
@@ -1002,7 +1000,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * {@inheritDoc}
      */
     @Override
-    public V computeIfAbsent(K key, Function<? super K, ? extends V> mappingFunction) {
+    public V computeIfAbsent(final K key, final Function<? super K, ? extends V> mappingFunction) {
         if (key == null) {
             throw new NullPointerException("key is null");
         }
@@ -1010,7 +1008,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             throw new NullPointerException("remappingFunction is null");
         }
 
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
         final int index = hash & (table.length - 1);
 
@@ -1057,7 +1055,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
             throw new NullPointerException("remappingFunction is null");
         }
 
-        final int hash = this.getHash(key);
+        final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
         final int index = hash & (table.length - 1);
 
