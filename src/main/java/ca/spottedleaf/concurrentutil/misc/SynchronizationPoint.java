@@ -13,19 +13,23 @@ public class SynchronizationPoint {
     protected final Thread[] threads;
     protected final long allWaitingThreads;
 
-    //@jdk.internal.vm.annotation.Contended
+    protected int reEntryCount;
+
+    @jdk.internal.vm.annotation.Contended
     protected volatile long runningThreads;
 
-    //@jdk.internal.vm.annotation.Contended
+    @jdk.internal.vm.annotation.Contended
     protected volatile long synchronizingThreads;
 
-    //@jdk.internal.vm.annotation.Contended
+    @jdk.internal.vm.annotation.Contended
     protected volatile long aloneExecutionThreads;
 
+    @jdk.internal.vm.annotation.Contended("lock")
     protected volatile int synchronizingLockCount;
+    @jdk.internal.vm.annotation.Contended("lock")
     protected volatile int startLockCount;
-
-    protected int reEntryCount;
+    @jdk.internal.vm.annotation.Contended("lock")
+    protected volatile int preempt;
 
     protected static final VarHandle RUNNING_THREADS_HANDLE =
             ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "runningThreads", long.class);
@@ -38,6 +42,8 @@ public class SynchronizationPoint {
             ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "synchronizingLockCount", int.class);
     protected static final VarHandle START_LOCK_COUNT_HANDLE =
             ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "startLockCount", int.class);
+    protected static final VarHandle PREEMPT_HANDLE =
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "preempt", int.class);
 
     /* running threads */
 
@@ -133,6 +139,20 @@ public class SynchronizationPoint {
         START_LOCK_COUNT_HANDLE.setVolatile(this, value);
     }
 
+    /* preempt */
+
+    protected final int getPreemptVolatile() {
+        return (int)PREEMPT_HANDLE.getVolatile(this);
+    }
+
+    protected final void setPreemptPlain(final int value) {
+        PREEMPT_HANDLE.set(value);
+    }
+
+    protected final void setPreemptVolatile(final int value) {
+        PREEMPT_HANDLE.setVolatile(value);
+    }
+
     /**
      * Constructs a synchronization point
      * @param threads The threads which will be interacting with this synchronization point.
@@ -156,7 +176,7 @@ public class SynchronizationPoint {
     }
 
     protected final void unparkAll(long bitset) {
-        for (int i = 0, times = Long.bitCount(bitset); i < times; ++i) {
+        for (int i = 0, bits = Long.bitCount(bitset); i < bits; ++i) {
             final int leading = Long.numberOfLeadingZeros(bitset);
             bitset ^= (IntegerUtil.HIGH_BIT_U64 >>> leading); // inlined IntegerUtil#roundFloorLog2(long)
             LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
@@ -164,7 +184,7 @@ public class SynchronizationPoint {
     }
 
     /** @return {@code true} if the calling thread can continue, {@code false} otherwise */
-    protected final boolean wakeThreads(final int id) {
+    protected final boolean wakeThreads(final int id) { // this function presumes all but one threads are awake
         final long aloneThreads = this.getAloneExecutionThreadsPlain();
 
         if (aloneThreads == 0) {
@@ -196,9 +216,16 @@ public class SynchronizationPoint {
         final long runningThreads = this.getAndOrRunningThreadsVolatile(bitfield) | bitfield;
 
         if (runningThreads != this.allWaitingThreads) {
+            boolean interrupted = false; // pass on interrupt
+
             do {
                 LockSupport.park();
+                interrupted |= Thread.interrupted();
             } while (this.getStartLockCountVolatile() == lockCount);
+
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         } else {
             this.setStartLockCountVolatile(lockCount + 1);
             this.unparkAll(id);
@@ -226,9 +253,16 @@ public class SynchronizationPoint {
             this.wakeThreads(id);
         }
 
+        boolean interrupted = false; // pass on interrupt
+
         do {
             LockSupport.park();
+            interrupted |= Thread.interrupted();
         } while (this.getStartLockCountVolatile() == lockCount);
+
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public void weakEnter(final int id) {
@@ -243,32 +277,54 @@ public class SynchronizationPoint {
         final int lockCount = this.getSynchronizingLockCountPlain();
 
         if (this.reEntryCount != 0) {
-            // we are the alone thread executing, we are re-entrant
+            /* we are the alone thread executing, we are re-entrant */
             return;
         }
 
         final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield) | bitfield;
         if (synchronizing != this.getRunningThreadsOpaque()) {
             /* Other threads are running */
+            boolean interrupted = false; // pass on interrupt
+
             do {
                 LockSupport.park();
+                interrupted |= Thread.interrupted();
             } while (this.getSynchronizingLockCountVolatile() == lockCount);
+
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            return;
         }
+
         /* potentially the only thread executing */
         if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
             /* Lost cas, so we assume an alone thread could execute */
+            boolean interrupted = false; // pass on interrupt
+
             do {
                 LockSupport.park();
+                interrupted |= Thread.interrupted();
             } while (this.getSynchronizingLockCountVolatile() == lockCount);
+
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         } else {
             /* Won cas, now we must wake up the other threads */
             if (this.wakeThreads(id)) {
                 return;
             }
 
+            boolean interrupted = false;
+
             do {
                 LockSupport.park();
+                interrupted |= Thread.interrupted();
             } while (this.getSynchronizingLockCountVolatile() == lockCount);
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -288,22 +344,48 @@ public class SynchronizationPoint {
 
         if (synchronizing != this.getRunningThreadsVolatile()) {
             /* Other threads are running */
-            do {
-                LockSupport.park();
-            } while ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0);
+            this.waitAloneThread(bitfield);
+            this.reEntryCount = 1;
             return;
         }
 
         /* potentially the only thread executing */
         if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
             /* Lost cas, this means another alone thread could execute */
-            do {
-                LockSupport.park();
-            } while ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0);
-        } else {
-            /* won cas, it's our job to wake up the threads */
-            /* however that is postponed until this alone thread has finished its execution */
-            this.reEntryCount = 1; /* set this for re-entry checks */
+            this.waitAloneThread(bitfield);
+        }
+        this.reEntryCount = 1;
+    }
+
+    private void waitAloneThread(final long bitfield) {
+        for (;;) {
+            LockSupport.park();
+            if ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0) {
+                return;
+            }
+            if (!Thread.interrupted()) {
+                continue;
+            }
+            // we've been preempted
+            final long start = System.nanoTime();
+
+            for (;;) {
+                ConcurrentUtil.pause();
+
+                final long currTime = System.nanoTime();
+
+                if ((currTime - start) >= (2 * 1000 * 1000)) {
+                    break; // return to park()
+                }
+
+                if ((currTime - start) >= (1000 * 1000 / 2)) {
+                    LockSupport.parkNanos(10_000); // pause for 10us
+                }
+
+                if ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0) {
+                    return;
+                }
+            }
         }
     }
 
@@ -322,6 +404,11 @@ public class SynchronizationPoint {
 
         do {
             LockSupport.park();
-        } while (this.getStartLockCountVolatile() == lockCount);
+        } while (this.getSynchronizingLockCountVolatile() == lockCount);
+    }
+
+    public void preemptNextAloneExecution(final int id) {
+        final long aloneThreads = this.getAloneExecutionThreadsPlain();
+        this.threads[IntegerUtil.floorLog2(aloneThreads)].interrupt();
     }
 }
