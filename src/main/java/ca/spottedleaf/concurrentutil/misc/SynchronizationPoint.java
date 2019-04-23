@@ -5,6 +5,7 @@ import ca.spottedleaf.concurrentutil.util.IntegerUtil;
 
 import java.lang.invoke.VarHandle;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BooleanSupplier;
 
 public class SynchronizationPoint {
 
@@ -29,7 +30,246 @@ public class SynchronizationPoint {
     @jdk.internal.vm.annotation.Contended("lock")
     protected volatile int startLockCount;
     @jdk.internal.vm.annotation.Contended("lock")
-    protected volatile int preempt;
+    protected volatile long preempt;
+
+    /**
+     * Constructs a synchronization point
+     * @param threads The threads which will be interacting with this synchronization point.
+     */
+    public SynchronizationPoint(final Thread[] threads) {
+        final int nthreads = threads.length;
+        if (nthreads >= 64 || nthreads == 0) {
+            throw new IllegalArgumentException("total threads out of range (0, 64): " + nthreads);
+        }
+        this.allWaitingThreads = -1L >>> (64 - nthreads); /* mask that represents all threads waiting */
+        this.threads = threads;
+    }
+
+    protected final void unparkAll(final int exceptFor) {
+        for (int i = 0; i < exceptFor; ++i) {
+            LockSupport.unpark(this.threads[i]);
+        }
+        for (int i = exceptFor + 1, len = this.threads.length; i < len; ++i) {
+            LockSupport.unpark(this.threads[i]);
+        }
+    }
+
+    protected final void unparkAll(long bitset) {
+        for (int i = 0, bits = Long.bitCount(bitset); i < bits; ++i) {
+            final int leading = Long.numberOfLeadingZeros(bitset);
+            bitset ^= (IntegerUtil.HIGH_BIT_U64 >>> leading); // inlined IntegerUtil#roundFloorLog2(long)
+            LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
+        }
+    }
+
+    /** @return {@code true} if the calling thread can continue, {@code false} otherwise */
+    protected final boolean wakeThreads(final int id) { // this function presumes all but one threads are awake
+        final long aloneThreads = this.getAloneExecutionThreadsPlain();
+
+        if (aloneThreads == 0) {
+            /* no more alone threads to execute, we can continue */
+
+            this.setSynchronizingLockCountVolatile(this.getSynchronizingLockCountPlain() + 1);
+            /* remove our bitfield and the field for indicating we're waking the threads */
+            /* We use AND for our bitfield since it's not guaranteed that ours is in the synchronizing threads (see end()) */
+            this.unparkAll((this.getSynchronizingThreadsPlain() ^ WAKING_THREADS_BITFIELD) & ~(1L << id));
+
+            return true;
+        }
+
+        final int leading = Long.numberOfLeadingZeros(aloneThreads);
+
+        /* we need to set this before unpark() so the alone thread can wake up from park() */
+        this.setAloneExecutionThreadsVolatile(aloneThreads ^ (IntegerUtil.HIGH_BIT_U64 >>> leading)); // inlined IntegerUtil#roundFloorLog2(long)
+        LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
+
+        /* indicate there are alone threads executing (possibly) */
+
+        return false;
+    }
+
+    // waits until the condition is false
+    protected final void waitConditionally(final long bitfield, final BooleanSupplier condition) {
+        boolean interrupted = false; // pass on interrupts
+        for (;;) {
+            LockSupport.park();
+            interrupted |= Thread.interrupted();
+            if (!condition.getAsBoolean()) {
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
+
+            if ((this.getAndAndPreemptVolatile(~bitfield) & bitfield) == 0) {
+                // not preempted
+                continue;
+            }
+
+            // we've been preempted
+            final long start = System.nanoTime();
+
+            for (;;) {
+                ConcurrentUtil.pause();
+
+                final long currTime = System.nanoTime();
+
+                if ((currTime - start) >= (2 * 1000 * 1000)) {
+                    break; // return to park()
+                }
+
+                if ((currTime - start) >= (1000 * 1000 / 2)) {
+                    LockSupport.parkNanos(10_000); // pause for 10us
+                }
+
+                if (!condition.getAsBoolean()) {
+                    return;
+                }
+            }
+        }
+    }
+
+    public void start(final int id) {
+        final long bitfield = 1L << id;
+        final int lockCount = this.getStartLockCountPlain();
+
+        final long runningThreads = this.getAndOrRunningThreadsVolatile(bitfield) | bitfield;
+
+        if (runningThreads != this.allWaitingThreads) {
+            this.waitConditionally(bitfield, () -> {
+                return this.getStartLockCountVolatile() == lockCount;
+            });
+        } else {
+            this.setStartLockCountVolatile(lockCount + 1);
+            this.unparkAll(id);
+        }
+    }
+
+    public void end(final int id) {
+        final long bitfield = 1L << id;
+        final int lockCount = this.getStartLockCountPlain();
+
+        final long runningThreads = this.getAndXorRunningThreadsVolatile(bitfield) ^ bitfield;
+
+        if (runningThreads == 0) {
+            /* Last thread running */
+            this.setStartLockCountVolatile(lockCount + 1);
+            this.unparkAll(id);
+
+            return;
+        }
+
+        final long synchronizingThreads = this.getSynchronizingThreadsOpaque();
+
+        if (synchronizingThreads == runningThreads
+                && synchronizingThreads == this.compareAndExchangeSynchronizingThreadsVolatile(synchronizingThreads, synchronizingThreads | WAKING_THREADS_BITFIELD)) {
+            this.wakeThreads(id);
+        }
+
+        this.waitConditionally(bitfield, () -> {
+            return this.getStartLockCountVolatile() == lockCount;
+        });
+    }
+
+    public void weakEnter(final int id) {
+        /* Use volatile to prevent re-ordering of this call */
+        if (this.getSynchronizingThreadsVolatile() != 0) {
+            this.enter(id);
+        }
+    }
+
+    public void enter(final int id) {
+        final long bitfield = 1L << id;
+        final int lockCount = this.getSynchronizingLockCountPlain();
+
+        if (this.reEntryCount != 0) {
+            /* we are the alone thread executing, we are re-entrant */
+            return;
+        }
+
+        final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield) | bitfield;
+        if (synchronizing != this.getRunningThreadsOpaque()) {
+            /* Other threads are running */
+            this.waitConditionally(bitfield, () -> {
+                return this.getSynchronizingLockCountVolatile() == lockCount;
+            });
+            return;
+        }
+
+        /* potentially the only thread executing */
+        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
+            /* Lost cas, so we assume an alone thread could execute */
+            this.waitConditionally(bitfield, () -> {
+                return this.getSynchronizingLockCountVolatile() == lockCount;
+            });
+        } else {
+            /* Won cas, now we must wake up the other threads */
+            if (this.wakeThreads(id)) {
+                return;
+            }
+
+            this.waitConditionally(bitfield, () -> {
+                return this.getSynchronizingLockCountVolatile() == lockCount;
+            });
+        }
+    }
+
+    public void enterAlone(final int id) {
+        final long bitfield = 1L << id;
+
+        if (this.reEntryCount != 0) {
+            /* We are the alone thread executing */
+            ++this.reEntryCount;
+            return;
+        }
+
+        /* add to the alone thread execution list */
+        this.getAndOrAloneExecutionThreadsVolatile(bitfield);
+
+        final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield) | bitfield;
+
+        if (synchronizing != this.getRunningThreadsOpaque()) {
+            /* Other threads are running */
+            this.waitConditionally(bitfield, () -> {
+                return this.getAloneExecutionThreadsVolatile() != 0;
+            });
+            this.reEntryCount = 1;
+            return;
+        }
+
+        /* potentially the only thread executing */
+        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
+            /* Lost cas, this means another alone thread could execute */
+            this.waitConditionally(bitfield, () -> {
+                return this.getAloneExecutionThreadsVolatile() != 0;
+            });
+        }
+        this.reEntryCount = 1;
+    }
+
+    public void endAloneExecution(final int id) {
+        if (--this.reEntryCount != 0) {
+            /* still re-entrant */
+            return;
+        }
+
+        final int lockCount = this.getSynchronizingLockCountPlain();
+
+        if (this.wakeThreads(id)) {
+            /* synchronizing threads have been unparked */
+            return;
+        }
+
+        this.waitConditionally(1L << id, () -> {
+            return this.getSynchronizingLockCountVolatile() == lockCount;
+        });
+    }
+
+    public void preemptThread(final int currId, final int preemptId) {
+        final long bitfield = 1L << preemptId;
+        this.getAndOrPreemptVolatile(bitfield);
+        LockSupport.unpark(this.threads[preemptId]);
+    }
 
     protected static final VarHandle RUNNING_THREADS_HANDLE =
             ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "runningThreads", long.class);
@@ -43,7 +283,7 @@ public class SynchronizationPoint {
     protected static final VarHandle START_LOCK_COUNT_HANDLE =
             ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "startLockCount", int.class);
     protected static final VarHandle PREEMPT_HANDLE =
-            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "preempt", int.class);
+            ConcurrentUtil.getVarHandle(SynchronizationPoint.class, "preempt", long.class);
 
     /* running threads */
 
@@ -141,274 +381,11 @@ public class SynchronizationPoint {
 
     /* preempt */
 
-    protected final int getPreemptVolatile() {
-        return (int)PREEMPT_HANDLE.getVolatile(this);
+    protected final long getAndAndPreemptVolatile(final long value) {
+        return (long)PREEMPT_HANDLE.getAndAdd(this, value);
     }
 
-    protected final void setPreemptPlain(final int value) {
-        PREEMPT_HANDLE.set(value);
-    }
-
-    protected final void setPreemptVolatile(final int value) {
-        PREEMPT_HANDLE.setVolatile(value);
-    }
-
-    /**
-     * Constructs a synchronization point
-     * @param threads The threads which will be interacting with this synchronization point.
-     */
-    public SynchronizationPoint(final Thread[] threads) {
-        final int nthreads = threads.length;
-        if (nthreads >= 64 || nthreads == 0) {
-            throw new IllegalArgumentException("total threads out of range (0, 64): " + nthreads);
-        }
-        this.allWaitingThreads = -1L >>> (64 - nthreads); /* mask that represents all threads waiting */
-        this.threads = threads;
-    }
-
-    protected final void unparkAll(final int exceptFor) {
-        for (int i = 0; i < exceptFor; ++i) {
-            LockSupport.unpark(this.threads[i]);
-        }
-        for (int i = exceptFor + 1, len = this.threads.length; i < len; ++i) {
-            LockSupport.unpark(this.threads[i]);
-        }
-    }
-
-    protected final void unparkAll(long bitset) {
-        for (int i = 0, bits = Long.bitCount(bitset); i < bits; ++i) {
-            final int leading = Long.numberOfLeadingZeros(bitset);
-            bitset ^= (IntegerUtil.HIGH_BIT_U64 >>> leading); // inlined IntegerUtil#roundFloorLog2(long)
-            LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
-        }
-    }
-
-    /** @return {@code true} if the calling thread can continue, {@code false} otherwise */
-    protected final boolean wakeThreads(final int id) { // this function presumes all but one threads are awake
-        final long aloneThreads = this.getAloneExecutionThreadsPlain();
-
-        if (aloneThreads == 0) {
-            /* no more alone threads to execute, we can continue */
-
-            this.setSynchronizingLockCountVolatile(this.getSynchronizingLockCountPlain() + 1);
-            /* remove our bitfield and the field for indicating we're waking the threads */
-            /* We use AND for our bitfield since it's not guaranteed that ours is in the synchronizing threads (see end()) */
-            this.unparkAll((this.getSynchronizingThreadsPlain() ^ WAKING_THREADS_BITFIELD) & ~(1L << id));
-
-            return true;
-        }
-
-        final int leading = Long.numberOfLeadingZeros(aloneThreads);
-
-        /* we need to set this before unpark() so the alone thread can wake up from park() */
-        this.setAloneExecutionThreadsVolatile(aloneThreads ^ (IntegerUtil.HIGH_BIT_U64 >>> leading)); // inlined IntegerUtil#roundFloorLog2(long)
-        LockSupport.unpark(this.threads[63 ^ leading]); // inlined IntegerUtil#floorLog2(long)
-
-        /* indicate there are alone threads executing (possibly) */
-
-        return false;
-    }
-
-    public void start(final int id) {
-        final long bitfield = 1L << id;
-        final int lockCount = this.getStartLockCountPlain();
-
-        final long runningThreads = this.getAndOrRunningThreadsVolatile(bitfield) | bitfield;
-
-        if (runningThreads != this.allWaitingThreads) {
-            boolean interrupted = false; // pass on interrupt
-
-            do {
-                LockSupport.park();
-                interrupted |= Thread.interrupted();
-            } while (this.getStartLockCountVolatile() == lockCount);
-
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        } else {
-            this.setStartLockCountVolatile(lockCount + 1);
-            this.unparkAll(id);
-        }
-    }
-
-    public void end(final int id) {
-        final long bitfield = 1L << id;
-        final int lockCount = this.getStartLockCountPlain();
-
-        final long runningThreads = this.getAndXorRunningThreadsVolatile(bitfield) ^ bitfield;
-
-        if (runningThreads == 0) {
-            /* Last thread running */
-            this.setStartLockCountVolatile(lockCount + 1);
-            this.unparkAll(id);
-
-            return;
-        }
-
-        final long synchronizingThreads = this.getSynchronizingThreadsOpaque();
-
-        if (synchronizingThreads == runningThreads
-                && synchronizingThreads == this.compareAndExchangeSynchronizingThreadsVolatile(synchronizingThreads, synchronizingThreads | WAKING_THREADS_BITFIELD)) {
-            this.wakeThreads(id);
-        }
-
-        boolean interrupted = false; // pass on interrupt
-
-        do {
-            LockSupport.park();
-            interrupted |= Thread.interrupted();
-        } while (this.getStartLockCountVolatile() == lockCount);
-
-        if (interrupted) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    public void weakEnter(final int id) {
-        /* Use volatile to prevent re-ordering of this call */
-        if (this.getSynchronizingThreadsVolatile() != 0) {
-            this.enter(id);
-        }
-    }
-
-    public void enter(final int id) {
-        final long bitfield = 1L << id;
-        final int lockCount = this.getSynchronizingLockCountPlain();
-
-        if (this.reEntryCount != 0) {
-            /* we are the alone thread executing, we are re-entrant */
-            return;
-        }
-
-        final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield) | bitfield;
-        if (synchronizing != this.getRunningThreadsOpaque()) {
-            /* Other threads are running */
-            boolean interrupted = false; // pass on interrupt
-
-            do {
-                LockSupport.park();
-                interrupted |= Thread.interrupted();
-            } while (this.getSynchronizingLockCountVolatile() == lockCount);
-
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-            return;
-        }
-
-        /* potentially the only thread executing */
-        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
-            /* Lost cas, so we assume an alone thread could execute */
-            boolean interrupted = false; // pass on interrupt
-
-            do {
-                LockSupport.park();
-                interrupted |= Thread.interrupted();
-            } while (this.getSynchronizingLockCountVolatile() == lockCount);
-
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        } else {
-            /* Won cas, now we must wake up the other threads */
-            if (this.wakeThreads(id)) {
-                return;
-            }
-
-            boolean interrupted = false;
-
-            do {
-                LockSupport.park();
-                interrupted |= Thread.interrupted();
-            } while (this.getSynchronizingLockCountVolatile() == lockCount);
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        }
-    }
-
-    public void enterAlone(final int id) {
-        final long bitfield = 1L << id;
-
-        if (this.reEntryCount != 0) {
-            /* We are the alone thread executing */
-            ++this.reEntryCount;
-            return;
-        }
-
-        /* add to the alone thread execution list */
-        this.getAndOrAloneExecutionThreadsVolatile(bitfield);
-
-        final long synchronizing = this.getAndOrSynchronizingThreadsVolatile(bitfield);
-
-        if (synchronizing != this.getRunningThreadsVolatile()) {
-            /* Other threads are running */
-            this.waitAloneThread(bitfield);
-            this.reEntryCount = 1;
-            return;
-        }
-
-        /* potentially the only thread executing */
-        if (synchronizing != this.compareAndExchangeSynchronizingThreadsVolatile(synchronizing, synchronizing | WAKING_THREADS_BITFIELD)) {
-            /* Lost cas, this means another alone thread could execute */
-            this.waitAloneThread(bitfield);
-        }
-        this.reEntryCount = 1;
-    }
-
-    private void waitAloneThread(final long bitfield) {
-        for (;;) {
-            LockSupport.park();
-            if ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0) {
-                return;
-            }
-            if (!Thread.interrupted()) {
-                continue;
-            }
-            // we've been preempted
-            final long start = System.nanoTime();
-
-            for (;;) {
-                ConcurrentUtil.pause();
-
-                final long currTime = System.nanoTime();
-
-                if ((currTime - start) >= (2 * 1000 * 1000)) {
-                    break; // return to park()
-                }
-
-                if ((currTime - start) >= (1000 * 1000 / 2)) {
-                    LockSupport.parkNanos(10_000); // pause for 10us
-                }
-
-                if ((this.getAloneExecutionThreadsVolatile() & bitfield) != 0) {
-                    return;
-                }
-            }
-        }
-    }
-
-    public void endAloneExecution(final int id) {
-        if (--this.reEntryCount != 0) {
-            /* still re-entrant */
-            return;
-        }
-
-        final int lockCount = this.getSynchronizingLockCountPlain();
-
-        if (this.wakeThreads(id)) {
-            /* synchronizing threads have been unparked */
-            return;
-        }
-
-        do {
-            LockSupport.park();
-        } while (this.getSynchronizingLockCountVolatile() == lockCount);
-    }
-
-    public void preemptNextAloneExecution(final int id) {
-        final long aloneThreads = this.getAloneExecutionThreadsPlain();
-        this.threads[IntegerUtil.floorLog2(aloneThreads)].interrupt();
+    protected final long getAndOrPreemptVolatile(final long value) {
+        return (long)PREEMPT_HANDLE.getAndBitwiseOr(this, value);
     }
 }
