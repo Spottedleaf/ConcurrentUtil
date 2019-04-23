@@ -4,6 +4,7 @@ import ca.spottedleaf.concurrentutil.ConcurrentUtil;
 import ca.spottedleaf.concurrentutil.util.ArrayUtil;
 import ca.spottedleaf.concurrentutil.util.CollectionUtil;
 import ca.spottedleaf.concurrentutil.util.IntegerUtil;
+import ca.spottedleaf.concurrentutil.util.Validate;
 
 import java.lang.invoke.VarHandle;
 import java.util.*;
@@ -152,7 +153,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * @param other The specified map.
      */
     public SingleWriterMultiReaderHashMap(final int capacity, final float loadFactor, final Map<K, V> other) {
-        this(Math.max(other.size(), capacity), loadFactor);
+        this(Math.max(Validate.notNull(other, "Null map").size(), capacity), loadFactor);
         this.putAll(other);
     }
 
@@ -300,6 +301,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public void forEach(final Consumer<? super Entry<K, V>> action) {
+        Validate.notNull(action, "Null action");
+
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
@@ -313,6 +316,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public void forEach(final BiConsumer<? super K, ? super V> action) {
+        Validate.notNull(action, "Null action");
+
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
@@ -342,6 +347,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * @param action The specified consumer.
      */
     public void forEachKey(final Consumer<? super K> action) {
+        Validate.notNull(action, "Null action");
+
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
@@ -355,6 +362,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * @param action The specified consumer.
      */
     public void forEachValue(final Consumer<? super V> action) {
+        Validate.notNull(action, "Null action");
+
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
@@ -373,9 +382,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V get(final Object key) {
-        if (key == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(key, "Null key");
+
         //noinspection unchecked
         final TableEntry<K, V> entry = this.getEntryForOpaque((K)key);
         return entry == null ? null : entry.getValueAcquire();
@@ -386,9 +394,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public boolean containsKey(final Object key) {
-        if (key == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(key, "Null key");
+
         return this.get(key) != null;
     }
 
@@ -399,9 +406,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * @return {@code true} if this map contains an entry with the specified key and value.
      */
     public boolean contains(final Object key, final Object value) {
-        if (key == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(key, "Null key");
+
         //noinspection unchecked
         final TableEntry<K, V> entry = this.getEntryForOpaque((K)key);
 
@@ -418,9 +424,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public boolean containsValue(final Object value) {
-        if (value == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(value, "Null value");
+
         final TableEntry<K, V>[] table = this.getTableAcquire();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = ArrayUtil.getOpaque(table, i); curr != null; curr = curr.getNextOpaque()) {
@@ -438,9 +443,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V getOrDefault(final Object key, final V defaultValue) {
-        if (key == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(key, "Null key");
+
         //noinspection unchecked
         final TableEntry<K, V> entry = this.getEntryForOpaque((K)key);
 
@@ -551,13 +555,6 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
     }
 
     protected final V put(final K key, final V value, final boolean ifAbsent) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (value == null) {
-            throw new NullPointerException("value is null");
-        }
-
         final TableEntry<K, V>[] table = this.getTablePlain();
         final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final int index = (table.length - 1) & hash;
@@ -602,6 +599,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * @return The total number of key-value pairs removed from this map.
      */
     public int removeIf(final BiPredicate<K, V> predicate) {
+        Validate.notNull(predicate, "Null predicate");
+
         int removed = 0;
 
         final TableEntry<K, V>[] table = this.getTablePlain();
@@ -652,6 +651,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      * @return The total number of key-value pairs removed from this map.
      */
     public int removeEntryIf(final Predicate<? super Map.Entry<K, V>> predicate) {
+        Validate.notNull(predicate, "Null predicate");
+
         int removed = 0;
 
         final TableEntry<K, V>[] table = this.getTablePlain();
@@ -700,6 +701,9 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V put(final K key, final V value) {
+        Validate.notNull(key, "Null key");
+        Validate.notNull(value, "Null value");
+
         return this.put(key, value, false);
     }
 
@@ -708,6 +712,9 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V putIfAbsent(final K key, final V value) {
+        Validate.notNull(key, "Null key");
+        Validate.notNull(value, "Null value");
+
         return this.put(key, value, true);
     }
 
@@ -716,9 +723,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public boolean remove(final Object key, final Object value) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(value, "Null value");
 
         final TableEntry<K, V>[] table = this.getTablePlain();
         final int hash = SingleWriterMultiReaderHashMap.getHash(key);
@@ -792,9 +798,7 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V remove(final Object key) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
+        Validate.notNull(key, "Null key");
 
         return this.remove(key, SingleWriterMultiReaderHashMap.getHash(key));
     }
@@ -804,15 +808,9 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public boolean replace(final K key, final V oldValue, final V newValue) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (oldValue == null) {
-            throw new NullPointerException("oldValue is null");
-        }
-        if (newValue == null) {
-            throw new NullPointerException("newValue is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(oldValue, "Null oldValue");
+        Validate.notNull(newValue, "Null newValue");
 
         final TableEntry<K, V> entry = this.getEntryForPlain(key);
         if (entry == null) {
@@ -832,12 +830,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V replace(final K key, final V value) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (value == null) {
-            throw new NullPointerException("value is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(value, "Null value");
 
         final TableEntry<K, V> entry = this.getEntryForPlain(key);
         if (entry == null) {
@@ -854,6 +848,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public void replaceAll(final BiFunction<? super K, ? super V, ? extends V> function) {
+        Validate.notNull(function, "Null function");
+
         final TableEntry<K, V>[] table = this.getTablePlain();
         for (int i = 0, len = table.length; i < len; ++i) {
             for (TableEntry<K, V> curr = table[i]; curr != null; curr = curr.getNextPlain()) {
@@ -877,6 +873,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public void putAll(final Map<? extends K, ? extends V> map) {
+        Validate.notNull(map, "Null map");
+
         final int size = map.size();
         this.checkResize(this.getSizePlain() + size/2); /* preemptively resize */
         map.forEach(this::put);
@@ -904,12 +902,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V compute(final K key, final BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (remappingFunction == null) {
-            throw new NullPointerException("remappingFunction is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(remappingFunction, "Null remappingFunction");
 
         final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
@@ -961,12 +955,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V computeIfPresent(final K key, final BiFunction<? super K, ? super V, ? extends V> remappingFunction) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (remappingFunction == null) {
-            throw new NullPointerException("remappingFunction is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(remappingFunction, "Null remappingFunction");
 
         final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
@@ -1002,12 +992,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V computeIfAbsent(final K key, final Function<? super K, ? extends V> mappingFunction) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (mappingFunction == null) {
-            throw new NullPointerException("remappingFunction is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(mappingFunction, "Null mappingFunction");
 
         final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
@@ -1046,15 +1032,9 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
      */
     @Override
     public V merge(final K key, final V value, final BiFunction<? super V, ? super V, ? extends V> remappingFunction) {
-        if (key == null) {
-            throw new NullPointerException("key is null");
-        }
-        if (value == null) {
-            throw new NullPointerException("value is null");
-        }
-        if (remappingFunction == null) {
-            throw new NullPointerException("remappingFunction is null");
-        }
+        Validate.notNull(key, "Null key");
+        Validate.notNull(value, "Null value");
+        Validate.notNull(remappingFunction, "Null remappingFunction");
 
         final int hash = SingleWriterMultiReaderHashMap.getHash(key);
         final TableEntry<K, V>[] table = this.getTablePlain();
@@ -1372,6 +1352,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public boolean removeAll(final Collection<?> collection) {
+            Validate.notNull(collection, "Null collection");
+
             boolean modified = false;
             for (final Object element : collection) {
                 modified |= this.remove(element);
@@ -1396,6 +1378,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public boolean containsAll(final Collection<?> collection) {
+            Validate.notNull(collection, "Null collection");
+
             for (final Object element : collection) {
                 if (!this.contains(element)) {
                     return false;
@@ -1492,11 +1476,15 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public boolean removeIf(final Predicate<? super Map.Entry<K, V>> filter) {
+            Validate.notNull(filter, "Null filter");
+
             return this.map.removeEntryIf(filter) != 0;
         }
 
         @Override
         public boolean retainAll(final Collection<?> collection) {
+            Validate.notNull(collection, "Null collection");
+
             return this.map.removeEntryIf((final Map.Entry<K, V> entry) -> {
                 return !collection.contains(entry);
             }) != 0;
@@ -1551,16 +1539,22 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public void forEach(final Consumer<? super V> action) {
+            Validate.notNull(action, "Null action");
+
             this.map.forEachValue(action);
         }
 
         @Override
         public boolean contains(final Object object) {
+            Validate.notNull(object, "Null object");
+
             return this.map.containsValue(object);
         }
 
         @Override
         public boolean remove(final Object object) {
+            Validate.notNull(object, "Null object");
+
             final Iterator<V> itr = this.iterator();
             while (itr.hasNext()) {
                 final V val = itr.next();
@@ -1574,6 +1568,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public boolean removeIf(final Predicate<? super V> filter) {
+            Validate.notNull(filter, "Null filter");
+
             return this.map.removeIf((final K key, final V value) -> {
                 return filter.test(value);
             }) != 0;
@@ -1581,6 +1577,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public boolean retainAll(final Collection<?> collection) {
+            Validate.notNull(collection, "Null collection");
+
             return this.map.removeIf((final K key, final V value) -> {
                 return !collection.contains(value);
             }) != 0;
@@ -1605,21 +1603,29 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public void forEach(final Consumer<? super K> action) {
+            Validate.notNull(action, "Null action");
+
             this.map.forEachKey(action);
         }
 
         @Override
         public boolean contains(final Object key) {
+            Validate.notNull(key, "Null key");
+
             return this.map.containsKey(key);
         }
 
         @Override
         public boolean remove(final Object key) {
+            Validate.notNull(key, "Null key");
+
             return this.map.remove(key) != null;
         }
 
         @Override
         public boolean retainAll(final Collection<?> collection) {
+            Validate.notNull(collection, "Null collection");
+
             return this.map.removeIf((final K key, final V value) -> {
                 return !collection.contains(key);
             }) != 0;
@@ -1627,6 +1633,8 @@ public class SingleWriterMultiReaderHashMap<K, V> implements Map<K, V>, Iterable
 
         @Override
         public boolean removeIf(final Predicate<? super K> filter) {
+            Validate.notNull(filter, "Null filter");
+
             return this.map.removeIf((final K key, final V value) -> {
                 return filter.test(key);
             }) != 0;

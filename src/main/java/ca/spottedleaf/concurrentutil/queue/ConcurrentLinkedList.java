@@ -2,6 +2,7 @@ package ca.spottedleaf.concurrentutil.queue;
 
 import ca.spottedleaf.concurrentutil.ConcurrentUtil;
 import ca.spottedleaf.concurrentutil.util.Throw;
+import ca.spottedleaf.concurrentutil.util.Validate;
 
 import java.lang.invoke.VarHandle;
 import java.util.*;
@@ -55,8 +56,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     }
 
     @SuppressWarnings("unchecked")
-    protected final LinkedNode<E> getHeadVolatile() {
-        return (LinkedNode<E>)HEAD_HANDLE.getVolatile(this);
+    protected final LinkedNode<E> getHeadAcquire() {
+        return (LinkedNode<E>)HEAD_HANDLE.getAcquire(this);
     }
 
     /* tail */
@@ -98,7 +99,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      * @param collection The specified collection.
      * @throws NullPointerException If {@code collection} is {@code null} or contains {@code null} elements.
      */
-    public ConcurrentLinkedList(final Collection<? extends E> collection) {
+    public ConcurrentLinkedList(final Iterable<? extends E> collection) {
         final Iterator<? extends E> elements = collection.iterator();
 
         if (!elements.hasNext()) {
@@ -108,24 +109,17 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             return;
         }
 
-        final LinkedNode<E> head = new LinkedNode<>(validateNotNull(elements.next()), null);
+        final LinkedNode<E> head = new LinkedNode<>(Validate.notNull(elements.next(), "Null element"), null);
         LinkedNode<E> tail = head;
 
         while (elements.hasNext()) {
-            final LinkedNode<E> next = new LinkedNode<>(validateNotNull(elements.next()), null);
+            final LinkedNode<E> next = new LinkedNode<>(Validate.notNull(elements.next(), "Null element"), null);
             tail.setNextPlain(next);
             tail = next;
         }
 
         this.setHeadPlain(head);
         this.setTailPlain(tail);
-    }
-
-    protected static <T> T validateNotNull(final T value) {
-        if (value == null) {
-            throw new NullPointerException();
-        }
-        return value;
     }
 
     /**
@@ -144,6 +138,10 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
     /**
      * {@inheritDoc}
+     * <p>
+     * Contrary to the specification of {@link Collection#add}, this method will fail to add the element to this queue
+     * and return {@code false} if this queue is add-blocked.
+     * </p>
      */
     @Override
     public boolean add(final E element) {
@@ -166,10 +164,15 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
     /**
      * {@inheritDoc}
+     * <p>
+     * This method may also return {@code false} to indicate an element was not added if this queue is add-blocked.
+     * </p>
      */
     @Override
     public boolean offer(final E element) {
-        final LinkedNode<E> node = new LinkedNode<>(validateNotNull(element), null);
+        Validate.notNull(element, "Null element");
+
+        final LinkedNode<E> node = new LinkedNode<>(element, null);
 
         return this.appendList(node, node);
     }
@@ -212,7 +215,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      * @return The head if it matches the predicate, or {@code null} if it did not or this queue is empty.
      */
     public E pollIf(final Predicate<E> predicate) {
-        return this.removeHead(predicate);
+        return this.removeHead(Validate.notNull(predicate, "Null predicate"));
     }
 
     /**
@@ -265,9 +268,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public boolean remove(final Object object) {
-        if (object == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(object, "Null object to remove");
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
             final LinkedNode<E> next = curr.getNextVolatile();
@@ -294,6 +295,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public boolean removeIf(final Predicate<? super E> filter) {
+        Validate.notNull(filter, "Null filter");
+
         boolean ret = false;
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
@@ -318,6 +321,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public boolean removeAll(final Collection<?> collection) {
+        Validate.notNull(collection, "Null collection");
+
         boolean ret = false;
 
         /* Volatile is required to synchronize with the write to the first element */
@@ -343,6 +348,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public boolean retainAll(final Collection<?> collection) {
+        Validate.notNull(collection, "Null collection");
+
         boolean ret = false;
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
@@ -416,6 +423,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public <T> T[] toArray(final IntFunction<T[]> generator) {
+        Validate.notNull(generator, "Null generator");
+
         final List<T> ret = new ArrayList<>();
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
@@ -485,11 +494,26 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     }
 
     /**
-     * {@inheritDoc}
+     * Adds all elements from the specified collection to this queue. The addition is atomic.
+     * @param collection The specified collection.
+     * @return {@code true} if all elements were added successfully, or {@code false} if this queue is add-blocked, or
+     * {@code false} if the specified collection contains no elements.
      */
     @Override
     public boolean addAll(final Collection<? extends E> collection) {
-        final Iterator<? extends E> elements = collection.iterator();
+        return this.addAll((Iterable<? extends E>)collection);
+    }
+
+    /**
+     * Adds all elements from the specified iterable object to this queue. The addition is atomic.
+     * @param iterable The specified iterable object.
+     * @return {@code true} if all elements were added successfully, or {@code false} if this queue is add-blocked, or
+     * {@code false} if the specified iterable contains no elements.
+     */
+    public boolean addAll(final Iterable<? extends E> iterable) {
+        Validate.notNull(iterable, "Null iterable");
+
+        final Iterator<? extends E> elements = iterable.iterator();
         if (!elements.hasNext()) {
             return false;
         }
@@ -497,11 +521,49 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         /* Build a list of nodes to append */
         /* This is an much faster due to the fact that zero additional synchronization is performed */
 
-        final LinkedNode<E> head = new LinkedNode<>(validateNotNull(elements.next()), null);
+        final LinkedNode<E> head = new LinkedNode<>(Validate.notNull(elements.next(), "Null element"), null);
         LinkedNode<E> tail = head;
 
         while (elements.hasNext()) {
-            final LinkedNode<E> next = new LinkedNode<>(validateNotNull(elements.next()), null);
+            final LinkedNode<E> next = new LinkedNode<>(Validate.notNull(elements.next(), "Null element"), null);
+            tail.setNextPlain(next);
+            tail = next;
+        }
+
+        return this.appendList(head, tail);
+    }
+
+    /**
+     * Adds all of the elements from the specified array to this queue.
+     * @param items The specified array.
+     * @return {@code true} if all elements were added successfully, or {@code false} if this queue is add-blocked, or
+     * {@code false} if the specified array has a length of 0.
+     */
+    public boolean addAll(final E[] items) {
+        return this.addAll(items, 0, items.length);
+    }
+
+    /**
+     * Adds all of the elements from the specified array to this queue.
+     * @param items The specified array.
+     * @param off The offset in the array.
+     * @param len The number of items.
+     * @return {@code true} if all elements were added successfully, or {@code false} if this queue is add-blocked, or
+     * {@code false} if the specified array has a length of 0.
+     */
+    public boolean addAll(final E[] items, final int off, final int len) {
+        Validate.notNull(items, "Items may not be null");
+        Validate.arrayBounds(off, len, items.length, "Items array indices out of bounds");
+
+        if (len == 0) {
+            return false;
+        }
+
+        final LinkedNode<E> head = new LinkedNode<>(Validate.notNull(items[off], "Null element"), null);
+        LinkedNode<E> tail = head;
+
+        for (int i = 1; i < len; ++i) {
+            final LinkedNode<E> next = new LinkedNode<>(Validate.notNull(items[off + i], "Null element"), null);
             tail.setNextPlain(next);
             tail = next;
         }
@@ -514,6 +576,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public boolean containsAll(final Collection<?> collection) {
+        Validate.notNull(collection, "Null collection");
+
         for (final Object element : collection) {
             if (!this.contains(element)) {
                 return false;
@@ -572,9 +636,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public boolean contains(final Object object) {
-        if (object == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(object, "Null object");
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
             final LinkedNode<E> next = curr.getNextVolatile();
@@ -599,9 +661,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      * @return The first element that matched the predicate, {@code null} if none matched.
      */
     public E find(final Predicate<E> predicate) {
-        if (predicate == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(predicate, "Null predicate");
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
             final LinkedNode<E> next = curr.getNextVolatile();
@@ -625,9 +685,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      */
     @Override
     public void forEach(final Consumer<? super E> action) {
-        if (action == null) {
-            throw new NullPointerException();
-        }
+        Validate.notNull(action, "Null action");
 
         for (LinkedNode<E> curr = this.getHeadOpaque();;) {
             final LinkedNode<E> next = curr.getNextVolatile();
@@ -649,7 +707,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
         for (LinkedNode<E> currTail = this.getTailOpaque(), curr = currTail;;) {
             /* It has been experimentally shown that placing the read before the backoff results in significantly greater performance */
-            /* It is likely due to false sharing */
+            /* It is likely due to a cache miss caused by another write to the next field */
             final LinkedNode<E> next = curr.getNextVolatile();
 
             for (int i = 0; i < failures; ++i) {
@@ -694,6 +752,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     protected final E removeHead(final Predicate<E> predicate) {
         int failures = 0;
         for (LinkedNode<E> head = this.getHeadOpaque(), curr = head;;) {
+            /* It has been experimentally shown that placing the reads before the backoff results in significantly greater performance */
+            /* It is likely due to a cache miss caused by another write to the next field */
             final E currentVal = curr.getElementVolatile();
             final LinkedNode<E> next = curr.getNextOpaque();
 
@@ -851,18 +911,21 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
      * @return The total number of elements drained.
      */
     public int drain(final Consumer<E> consumer, final boolean preventAdds, final Consumer<Throwable> exceptionHandler) {
+        Validate.notNull(consumer, "Null consumer");
+        Validate.notNull(exceptionHandler, "Null exception handler");
+
         /* This function assumes proper synchronization is made to ensure drain and no other read function are called concurrently */
         /* This allows plain write usages instead of opaque or higher */
         int total = 0;
 
-        final LinkedNode<E> head = this.getHeadVolatile(); /* Required to synchronize with the write to the first element field */
+        final LinkedNode<E> head = this.getHeadAcquire(); /* Required to synchronize with the write to the first element field */
         LinkedNode<E> curr = head;
 
         for (;;) {
             /* Volatile acquires with the write to the element field */
             final E currentVal = curr.getElementPlain();
 
-            LinkedNode<E> next = curr.getNextAcquire();
+            LinkedNode<E> next = curr.getNextVolatile();
 
             if (next == curr) {
                 /* Add-locked nodes always have a null value */
