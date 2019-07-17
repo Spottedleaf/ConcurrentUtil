@@ -18,9 +18,13 @@ import java.util.function.Predicate;
  * <p>
  * Note that this queue breaks the specification laid out by {@link Collection}, see {@link #preventAdds()} and {@link Collection#add(Object)}.
  * </p>
+ * <p><b>
+ * This queue will only unlink linked nodes through the {@link #peek()} and {@link #poll()} methods, and this is only if
+ * they are at the head of the queue.
+ * </b></p>
  * @param <E> Type of element in this queue.
  */
-public class ConcurrentLinkedList<E> implements Queue<E> {
+public class MultiThreadedQueue<E> implements Queue<E> {
 
     @jdk.internal.vm.annotation.Contended
     protected volatile LinkedNode<E> head; /* Always non-null, high chance of being the actual head */
@@ -32,8 +36,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
     /* IMPL NOTE: Leave hashCode and equals to their defaults */
 
-    protected static final VarHandle HEAD_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "head", LinkedNode.class);
-    protected static final VarHandle TAIL_HANDLE = ConcurrentUtil.getVarHandle(ConcurrentLinkedList.class, "tail", LinkedNode.class);
+    protected static final VarHandle HEAD_HANDLE = ConcurrentUtil.getVarHandle(MultiThreadedQueue.class, "head", LinkedNode.class);
+    protected static final VarHandle TAIL_HANDLE = ConcurrentUtil.getVarHandle(MultiThreadedQueue.class, "tail", LinkedNode.class);
 
     /* head */
 
@@ -79,27 +83,28 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     protected final LinkedNode<E> getTailOpaque() {
         return (LinkedNode<E>)TAIL_HANDLE.getOpaque(this);
     }
+
     /**
-     * Constructs a {@code ConcurrentLinkedList}, initially empty.
+     * Constructs a {@code MultiThreadedQueue}, initially empty.
      * <p>
      * The returned object may not be published without synchronization.
      * </p>
      */
-    public ConcurrentLinkedList() {
+    public MultiThreadedQueue() {
         final LinkedNode<E> value = new LinkedNode<>(null, null);
         this.setHeadPlain(value);
         this.setTailPlain(value);
     }
 
     /**
-     * Constructs a {@code ConcurrentLinkedList}, initially containing all elements in the specified {@code collection}.
+     * Constructs a {@code MultiThreadedQueue}, initially containing all elements in the specified {@code collection}.
      * <p>
      * The returned object may not be published without synchronization.
      * </p>
      * @param collection The specified collection.
      * @throws NullPointerException If {@code collection} is {@code null} or contains {@code null} elements.
      */
-    public ConcurrentLinkedList(final Iterable<? extends E> collection) {
+    public MultiThreadedQueue(final Iterable<? extends E> collection) {
         final Iterator<? extends E> elements = collection.iterator();
 
         if (!elements.hasNext()) {
@@ -146,6 +151,19 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     @Override
     public boolean add(final E element) {
         return this.offer(element);
+    }
+
+    /**
+     * Adds the specified element to the tail of this queue. If this queue is currently add-locked, then the queue is
+     * released from that lock and this element is added. The unlock operation and addition of the specified
+     * element is atomic.
+     * @param element The specified element.
+     * @return {@code true} if this queue previously allowed additions
+     */
+    public boolean forceAdd(final E element) {
+        final LinkedNode<E> node = new LinkedNode<>(element, null);
+
+        return !this.forceAppendList(node, node);
     }
 
     /**
@@ -211,6 +229,9 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     /**
      * Retrieves and removes the head of this queue if it matches the specified predicate. If this queue is empty
      * or the head does not match the predicate, this function returns {@code null}.
+     * <p>
+     * The predicate may be invoked multiple or no times in this call.
+     * </p>
      * @param predicate The specified predicate.
      * @return The head if it matches the predicate, or {@code null} if it did not or this queue is empty.
      */
@@ -248,7 +269,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
     /**
      * Allows elements to be added to this queue once again. Note that this function has undefined behaviour if
-     * {@link #preventAdds()} is not called beforehand.
+     * {@link #preventAdds()} is not called beforehand. The benefit of this function over {@link #tryAllowAdds()}
+     * is that this function might perform better.
      * <p>
      * This function is not MT-Safe.
      * </p>
@@ -264,6 +286,180 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     }
 
     /**
+     * Tries to allow elements to be added to this queue. Returns {@code true} if the queue was previous add-locked,
+     * {@code false} otherwise.
+     * <p>
+     * This function is MT-Safe, however it should not be used with {@link #allowAdds()}.
+     * </p>
+     * @return {@code true} if the queue was previously add-locked, {@code false} otherwise.
+     */
+    public boolean tryAllowAdds() {
+        LinkedNode<E> tail = this.getTailPlain();
+
+        for (int failures = 0;;) {
+            /* We need to find the tail given the cas on tail isn't atomic (nor volatile) in this.appendList */
+            /* Thus it is possible for an outdated tail to be set */
+            while (tail != (tail = tail.getNextAcquire())) {
+                if (tail == null) {
+                    return false;
+                }
+            }
+
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
+            if (tail == (tail = tail.compareExchangeNextVolatile(tail, null))) {
+                return true;
+            }
+
+            if (tail == null) {
+                return false;
+            }
+            ++failures;
+        }
+    }
+
+    /**
+     * Atomically adds the specified element to this queue or allows additions to the queue. If additions
+     * are not allowed, the element is not added.
+     * <p>
+     * This function is MT-Safe.
+     * </p>
+     * @param element The specified element.
+     * @return {@code true} if the queue now allows additions, {@code false} if the element was added.
+     */
+    public boolean addOrAllowAdds(final E element) {
+        Validate.notNull(element, "Null element");
+        int failures = 0;
+
+        final LinkedNode<E> append = new LinkedNode<>(element, null);
+
+        for (LinkedNode<E> currTail = this.getTailOpaque(), curr = currTail;;) {
+            /* It has been experimentally shown that placing the read before the backoff results in significantly greater performance */
+            /* It is likely due to a cache miss caused by another write to the next field */
+            final LinkedNode<E> next = curr.getNextVolatile();
+
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
+            if (next == null) {
+                final LinkedNode<E> compared = curr.compareExchangeNextVolatile(null, append);
+
+                if (compared == null) {
+                    /* Added */
+                    /* Avoid CASing on tail more than we need to */
+                    /* CAS to avoid setting an out-of-date tail */
+                    if (this.getTailOpaque() == currTail) {
+                        this.setTailOpaque(append);
+                    }
+                    return false; // we added
+                }
+
+                ++failures;
+                curr = compared;
+                continue;
+            } else if (next == curr) {
+                final LinkedNode<E> compared = curr.compareExchangeNextVolatile(curr, null);
+
+                if (compared == curr) {
+                    return true; // we let additions through
+                }
+
+                ++failures;
+
+                if (compared != null) {
+                    curr = compared;
+                }
+                continue;
+            }
+
+            if (curr == currTail) {
+                /* Tail is likely not up-to-date */
+                curr = next;
+            } else {
+                /* Try to update to tail */
+                if (currTail == (currTail = this.getTailOpaque())) {
+                    curr = next;
+                } else {
+                    curr = currTail;
+                }
+            }
+        }
+    }
+
+    /**
+     * Atomically removes the head from this queue if it exists, otherwise prevents additions to this queue if no
+     * head is removed.
+     * <p>
+     * This function is MT-Safe.
+     * </p>
+     * If the queue is already add-blocked and empty then no operation is performed.
+     * @return {@code null} if the queue is now add-blocked or was previously add-blocked, else returns
+     * an non-null value which was the previous head of queue.
+     */
+    public E pollOrBlockAdds() {
+        int failures = 0;
+        for (LinkedNode<E> head = this.getHeadOpaque(), curr = head;;) {
+            final E currentVal = curr.getElementVolatile();
+            final LinkedNode<E> next = curr.getNextOpaque();
+
+            if (next == curr) {
+                return null; /* Additions are already blocked */
+            }
+
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
+            if (currentVal != null) {
+                if (curr.getAndSetElementVolatile(null) == null) {
+                    ++failures;
+                    continue;
+                }
+
+                /* "CAS" to avoid setting an out-of-date head */
+                if (this.getHeadOpaque() == head) {
+                    this.setHeadOpaque(next != null ? next : curr);
+                }
+
+                return currentVal;
+            }
+
+            if (next == null) {
+                /* Try to update stale head */
+                if (curr != head && this.getHeadOpaque() == head) {
+                    this.setHeadOpaque(curr);
+                }
+
+                final LinkedNode<E> compared = curr.compareExchangeNextVolatile(null, curr);
+
+                if (compared != null) {
+                    // failed to block additions
+                    curr = compared;
+                    ++failures;
+                    continue;
+                }
+
+                return null; /* We blocked additions */
+            }
+
+            if (head == curr) {
+                /* head is likely not up-to-date */
+                curr = next;
+            } else {
+                /* Try to update to head */
+                if (head == (head = this.getHeadOpaque())) {
+                    curr = next;
+                } else {
+                    curr = head;
+                }
+            }
+        }
+    }
+
+    /**
      * {@inheritDoc}
      */
     @Override
@@ -275,8 +471,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             final E element = curr.getElementPlain(); /* Likely in sync */
 
             if (element != null) {
-                if ((element == object || element.equals(object))
-                        && curr.getAndSetElementVolatile(null) == element) {
+                if ((element == object || element.equals(object)) && curr.getAndSetElementVolatile(null) == element) {
                     return true;
                 }
             }
@@ -406,7 +601,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             if (element != null) {
                 //noinspection unchecked
-                ret.add((T) element);
+                ret.add((T)element);
             }
 
             if (next == null || next == curr) {
@@ -433,7 +628,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             if (element != null) {
                 //noinspection unchecked
-                ret.add((T) element);
+                ret.add((T)element);
             }
 
             if (next == null || next == curr) {
@@ -452,7 +647,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
     public String toString() {
         final StringBuilder builder = new StringBuilder();
 
-        builder.append("ConcurrentLinkedList: {elements: {");
+        builder.append("MultiThreadedQueue: {elements: {");
 
         int deadEntries = 0;
         int totalEntries = 0;
@@ -702,7 +897,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         }
     }
 
-    protected final boolean appendList(final LinkedNode<E> head, final LinkedNode<E> tail) {
+    // return true if normal addition, false if the queue previously disallowed additions
+    protected final boolean forceAppendList(final LinkedNode<E> head, final LinkedNode<E> tail) {
         int failures = 0;
 
         for (LinkedNode<E> currTail = this.getTailOpaque(), curr = currTail;;) {
@@ -714,8 +910,58 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
                 ConcurrentUtil.pause();
             }
 
+            if (next == null || next == curr) {
+                final LinkedNode<E> compared = curr.compareExchangeNextVolatile(next, head);
+
+                if (compared == next) {
+                    /* Added */
+                    /* Avoid CASing on tail more than we need to */
+                    /* CAS to avoid setting an out-of-date tail */
+                    if (this.getTailOpaque() == currTail) {
+                        this.setTailOpaque(tail);
+                    }
+                    return next != curr;
+                }
+
+                ++failures;
+                curr = compared;
+                continue;
+            }
+
+            if (curr == currTail) {
+                /* Tail is likely not up-to-date */
+                curr = next;
+            } else {
+                /* Try to update to tail */
+                if (currTail == (currTail = this.getTailOpaque())) {
+                    curr = next;
+                } else {
+                    curr = currTail;
+                }
+            }
+        }
+    }
+
+    // return true if successful, false otherwise
+    protected final boolean appendList(final LinkedNode<E> head, final LinkedNode<E> tail) {
+        int failures = 0;
+
+        for (LinkedNode<E> currTail = this.getTailOpaque(), curr = currTail;;) {
+            /* It has been experimentally shown that placing the read before the backoff results in significantly greater performance */
+            /* It is likely due to a cache miss caused by another write to the next field */
+            final LinkedNode<E> next = curr.getNextVolatile();
+
+            if (next == curr) {
+                /* Additions are stopped */
+                return false;
+            }
+
+            for (int i = 0; i < failures; ++i) {
+                ConcurrentUtil.pause();
+            }
+
             if (next == null) {
-                final LinkedNode<E> compared = curr.compreExchangeNextVolatile(null, head);
+                final LinkedNode<E> compared = curr.compareExchangeNextVolatile(null, head);
 
                 if (compared == null) {
                     /* Added */
@@ -730,9 +976,6 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
                 ++failures;
                 curr = compared;
                 continue;
-            } else if (next == curr) {
-                /* Additions are stopped */
-                return false;
             }
 
             if (curr == currTail) {
@@ -757,6 +1000,10 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             final E currentVal = curr.getElementVolatile();
             final LinkedNode<E> next = curr.getNextOpaque();
 
+            if (next == curr) {
+                return null;
+            }
+
             for (int i = 0; i < failures; ++i) {
                 ConcurrentUtil.pause();
             }
@@ -769,11 +1016,8 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
                     }
                     return null;
                 }
-                if (curr.compareExchangeElementVolatile(currentVal, null) != currentVal) {
+                if (curr.getAndSetElementVolatile(null) == null) {
                     /* Failed to get head */
-                    if (curr == (curr = next) || next == null) {
-                        return null;
-                    }
                     ++failures;
                     continue;
                 }
@@ -814,12 +1058,16 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
             final E currentVal = curr.getElementVolatile();
             final LinkedNode<E> next = curr.getNextOpaque();
 
+            if (next == curr) {
+                return null;
+            }
+
             for (int i = 0; i < failures; ++i) {
                 ConcurrentUtil.pause();
             }
 
             if (currentVal != null) {
-                if (curr.compareExchangeElementVolatile(currentVal, null) != currentVal) {
+                if (curr.getAndSetElementVolatile(null) == null) {
                     /* Failed to get head */
                     if (curr == (curr = next) || next == null) {
                         return null;
@@ -934,7 +1182,13 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             if (currentVal == null) {
                 if (next == null) {
-                    break;
+                    if (preventAdds && (next = curr.compareExchangeNextVolatile(null, curr)) != null) {
+                        // failed to prevent adds, continue
+                        continue;
+                    } else {
+                        // we're done here
+                        break;
+                    }
                 }
                 curr = next;
                 continue;
@@ -951,16 +1205,13 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
 
             curr.setElementOpaque(null);
 
-
             ++total;
 
             if (next == null) {
-                if (preventAdds) {
-                    if ((next = curr.compreExchangeNextVolatile(null, curr)) != null) {
-                        /* Retry with next value */
-                        curr = next;
-                        continue;
-                    }
+                if (preventAdds && (next = curr.compareExchangeNextVolatile(null, curr)) != null) {
+                    /* Retry with next value */
+                    curr = next;
+                    continue;
                 }
                 break;
             }
@@ -1057,7 +1308,7 @@ public class ConcurrentLinkedList<E> implements Queue<E> {
         }
 
         @SuppressWarnings("unchecked")
-        protected final LinkedNode<E> compreExchangeNextVolatile(final LinkedNode<E> expect, final LinkedNode<E> set) {
+        protected final LinkedNode<E> compareExchangeNextVolatile(final LinkedNode<E> expect, final LinkedNode<E> set) {
             return (LinkedNode<E>)NEXT_HANDLE.compareAndExchange(this, expect, set);
         }
     }

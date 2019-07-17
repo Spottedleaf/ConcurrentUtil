@@ -98,7 +98,7 @@ public final class IntegerUtil {
     // copied from hacker's delight (signed division magic value)
     // http://www.hackersdelight.org/hdcodetxt/magic.c.txt
     public static long getDivisorNumbers(final int d) {
-        final int ad = Math.abs(d);
+        final int ad = IntegerUtil.branchlessAbs(d);
 
         if (ad < 2) {
             throw new IllegalArgumentException("|number| must be in [2, 2^31 -1], not: " + d);
