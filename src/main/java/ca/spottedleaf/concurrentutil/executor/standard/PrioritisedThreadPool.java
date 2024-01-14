@@ -462,7 +462,7 @@ public final class PrioritisedThreadPool {
         private long totalQueuedTasks = 0L;
 
         @Override
-        protected void priorityChange(final PrioritisedTask task, final Priority from, final Priority to) {
+        protected void priorityChange(final PrioritisedThreadedTaskQueue.PrioritisedTask task, final Priority from, final Priority to) {
             // Note: The superclass' queue lock is ALWAYS held when inside this method. So we do NOT need to do any additional synchronisation
             // for accessing this queue's state.
             final long[] priorityCounts = this.priorityCounts;
