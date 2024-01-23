@@ -80,7 +80,7 @@ public final class ReentrantAreaLock {
         final int toSectionX = toX >> shift;
         final int toSectionZ = toZ >> shift;
 
-        final long[] areaAffected = new long[(toSectionX - fromSectionX + 1) * (toSectionZ - fromSectionX + 1)];
+        final long[] areaAffected = new long[(toSectionX - fromSectionX + 1) * (toSectionZ - fromSectionZ + 1)];
         int areaAffectedLen = 0;
 
         final Node ret = new Node(this, areaAffected, currThread);
@@ -206,7 +206,7 @@ public final class ReentrantAreaLock {
             return this.lock(fromX, fromZ);
         }
 
-        final long[] areaAffected = new long[(toSectionX - fromSectionX + 1) * (toSectionZ - fromSectionX + 1)];
+        final long[] areaAffected = new long[(toSectionX - fromSectionX + 1) * (toSectionZ - fromSectionZ + 1)];
         int areaAffectedLen = 0;
 
         final Node ret = new Node(this, areaAffected, currThread);
@@ -315,7 +315,7 @@ public final class ReentrantAreaLock {
         // remove from node map; allowing other threads to lock
         for (int i = 0; i < areaAffectedLen; ++i) {
             final long coordinate = areaAffected[i];
-            if (this.nodes.remove(coordinate) != node) {
+            if (this.nodes.remove(coordinate, node) != node) {
                 throw new IllegalStateException();
             }
         }
@@ -342,7 +342,7 @@ public final class ReentrantAreaLock {
         @Override
         public String toString() {
             return "Node{" +
-                "areaAffected=" + this.areaAffected +
+                "areaAffected=" + IntPairUtil.toString(this.areaAffected, 0, this.areaAffectedLen) +
                 ", thread=" + this.thread +
                 '}';
         }

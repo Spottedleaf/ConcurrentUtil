@@ -23,5 +23,24 @@ public final class IntPairUtil {
         return (int)(key >>> 32);
     }
 
+    public static String toString(final long key) {
+        return "{left:" + left(key) + ", right:" + right(key) + "}";
+    }
+
+    public static String toString(final long[] array, final int from, final int to) {
+        final StringBuilder ret = new StringBuilder();
+        ret.append("[");
+
+        for (int i = from; i < to; ++i) {
+            if (i != from) {
+                ret.append(", ");
+            }
+            ret.append(toString(array[i]));
+        }
+
+        ret.append("]");
+        return ret.toString();
+    }
+
     private IntPairUtil() {}
 }
