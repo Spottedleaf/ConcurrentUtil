@@ -94,7 +94,7 @@ public class ConcurrentLong2ReferenceChainedHashTable<V> {
             return THRESHOLD_NO_RESIZE;
         }
 
-        return (int)ret;
+        return (int)Math.ceil(ret);
     }
 
     protected static int getCapacityFor(final int capacity) {
