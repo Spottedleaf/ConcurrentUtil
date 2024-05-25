@@ -1085,6 +1085,7 @@ public class ConcurrentLong2ReferenceChainedHashTable<V> {
                         // volatile ordering ensured by addSize(), but we need release here
                         // to ensure proper ordering with reads and other writes
                         prev.setNextRelease(new TableEntry<>(key, computed));
+                        ret = computed;
                         added = true;
                     }
                 }
