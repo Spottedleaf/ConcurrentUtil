@@ -545,7 +545,10 @@ public class ConcurrentLong2ReferenceChainedHashTable<V> {
 
                 // optimise ifAbsent calls: check if first node is key before attempting lock acquire
                 if (node.key == key) {
-                    return node.getValueVolatile();
+                    final V ret = node.getValueVolatile();
+                    if (ret != null) {
+                        return ret;
+                    } // else: fall back to lock to read the node
                 }
 
                 synchronized (node) {
@@ -1062,7 +1065,10 @@ public class ConcurrentLong2ReferenceChainedHashTable<V> {
 
                 // optimise ifAbsent calls: check if first node is key before attempting lock acquire
                 if (node.key == key) {
-                    return node.getValueVolatile();
+                    ret = node.getValueVolatile();
+                    if (ret != null) {
+                        return ret;
+                    } // else: fall back to lock to read the node
                 }
 
                 boolean added = false;
