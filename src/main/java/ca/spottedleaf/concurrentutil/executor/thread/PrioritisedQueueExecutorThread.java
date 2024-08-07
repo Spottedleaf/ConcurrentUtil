@@ -1,6 +1,8 @@
-package ca.spottedleaf.concurrentutil.executor.standard;
+package ca.spottedleaf.concurrentutil.executor.thread;
 
+import ca.spottedleaf.concurrentutil.executor.PrioritisedExecutor;
 import ca.spottedleaf.concurrentutil.util.ConcurrentUtil;
+import ca.spottedleaf.concurrentutil.util.Priority;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.lang.invoke.VarHandle;
@@ -11,8 +13,7 @@ import java.util.concurrent.locks.LockSupport;
  * <p>
  *     Note: When using this thread, queue additions to the underlying {@link #queue} are not sufficient to get this thread
  *     to execute the task. The function {@link #notifyTasks()} must be used after scheduling a task. For expected behaviour
- *     of task scheduling (thread wakes up after tasks are scheduled), use the methods provided on {@link PrioritisedExecutor}
- *     methods.
+ *     of task scheduling, use the methods provided on this class to schedule tasks.
  * </p>
  */
 public class PrioritisedQueueExecutorThread extends Thread implements PrioritisedExecutor {
@@ -30,7 +31,7 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
 
     protected final long spinWaitTime;
 
-    static final long DEFAULT_SPINWAIT_TIME = (long)(0.1e6);// 0.1ms
+    protected static final long DEFAULT_SPINWAIT_TIME = (long)(0.1e6);// 0.1ms
 
     public PrioritisedQueueExecutorThread(final PrioritisedExecutor queue) {
         this(queue, DEFAULT_SPINWAIT_TIME); // 0.1ms
@@ -42,7 +43,16 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
     }
 
     @Override
-    public void run() {
+    public final void run() {
+        try {
+            this.begin();
+            this.doRun();
+        } finally {
+            this.die();
+        }
+    }
+
+    public final void doRun() {
         final long spinWaitTime = this.spinWaitTime;
 
         main_loop:
@@ -80,7 +90,7 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
             this.setThreadParkedVolatile(true);
 
             // We need to parse here to avoid a race condition where a thread queues a task before we set parked to true
-            // (i.e it will not notify us)
+            // (i.e. it will not notify us)
             if (this.pollTasks()) {
                 this.setThreadParkedVolatile(false);
                 continue;
@@ -99,6 +109,10 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
         }
     }
 
+    protected void begin() {}
+
+    protected void die() {}
+
     /**
      * Attempts to poll as many tasks as possible, returning when finished.
      * @return Whether any tasks were executed.
@@ -115,8 +129,6 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
                     break;
                 }
                 ret = true;
-            } catch (final ThreadDeath death) {
-                throw death; // goodbye world...
             } catch (final Throwable throwable) {
                 LOGGER.error("Exception thrown from prioritized runnable task in thread '" + this.getName() + "'", throwable);
             }
@@ -146,67 +158,6 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
     }
 
     @Override
-    public PrioritisedTask createTask(final Runnable task, final Priority priority) {
-        final PrioritisedTask queueTask = this.queue.createTask(task, priority);
-
-        // need to override queue() to notify us of tasks
-        return new PrioritisedTask() {
-            @Override
-            public Priority getPriority() {
-                return queueTask.getPriority();
-            }
-
-            @Override
-            public boolean setPriority(final Priority priority) {
-                return queueTask.setPriority(priority);
-            }
-
-            @Override
-            public boolean raisePriority(final Priority priority) {
-                return queueTask.raisePriority(priority);
-            }
-
-            @Override
-            public boolean lowerPriority(final Priority priority) {
-                return queueTask.lowerPriority(priority);
-            }
-
-            @Override
-            public boolean queue() {
-                final boolean ret = queueTask.queue();
-                if (ret) {
-                    PrioritisedQueueExecutorThread.this.notifyTasks();
-                }
-                return ret;
-            }
-
-            @Override
-            public boolean cancel() {
-                return queueTask.cancel();
-            }
-
-            @Override
-            public boolean execute() {
-                return queueTask.execute();
-            }
-        };
-    }
-
-    @Override
-    public PrioritisedTask queueRunnable(final Runnable task, final Priority priority) {
-        final PrioritisedTask ret = this.queue.queueRunnable(task, priority);
-
-        this.notifyTasks();
-
-        return ret;
-    }
-
-    @Override
-    public boolean haveAllTasksExecuted() {
-        return this.queue.haveAllTasksExecuted();
-    }
-
-    @Override
     public long getTotalTasksExecuted() {
         return this.queue.getTotalTasksExecuted();
     }
@@ -216,16 +167,19 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
         return this.queue.getTotalTasksScheduled();
     }
 
-    /**
-     * {@inheritDoc}
-     * @throws IllegalStateException If the current thread is {@code this} thread, or the underlying queue throws this exception.
-     */
     @Override
-    public void waitUntilAllExecuted() throws IllegalStateException {
-        if (Thread.currentThread() == this) {
-            throw new IllegalStateException("Cannot block on our own queue");
-        }
-        this.queue.waitUntilAllExecuted();
+    public long generateNextSubOrder() {
+        return this.queue.generateNextSubOrder();
+    }
+
+    @Override
+    public boolean shutdown() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public boolean isShutdown() {
+        return false;
     }
 
     /**
@@ -237,12 +191,61 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
         throw new IllegalStateException();
     }
 
+    @Override
+    public PrioritisedTask queueTask(final Runnable task) {
+        final PrioritisedTask ret = this.createTask(task);
+
+        ret.queue();
+
+        return ret;
+    }
+
+    @Override
+    public PrioritisedTask queueTask(final Runnable task, final Priority priority) {
+        final PrioritisedTask ret = this.createTask(task, priority);
+
+        ret.queue();
+
+        return ret;
+    }
+
+    @Override
+    public PrioritisedTask queueTask(final Runnable task, final Priority priority, final long subOrder) {
+        final PrioritisedTask ret = this.createTask(task, priority, subOrder);
+
+        ret.queue();
+
+        return ret;
+    }
+
+
+    @Override
+    public PrioritisedTask createTask(Runnable task) {
+        final PrioritisedTask queueTask = this.queue.createTask(task);
+
+        return new WrappedTask(queueTask);
+    }
+
+    @Override
+    public PrioritisedTask createTask(final Runnable task, final Priority priority) {
+        final PrioritisedTask queueTask = this.queue.createTask(task, priority);
+
+        return new WrappedTask(queueTask);
+    }
+
+    @Override
+    public PrioritisedTask createTask(final Runnable task, final Priority priority, final long subOrder) {
+        final PrioritisedTask queueTask = this.queue.createTask(task, priority, subOrder);
+
+        return new WrappedTask(queueTask);
+    }
+
     /**
      * Closes this queue executor's queue. Optionally waits for all tasks in queue to be executed if {@code wait} is true.
      * <p>
      *     This function is MT-Safe.
      * </p>
-     * @param wait If this call is to wait until the queue is empty and there are no tasks executing in the queue.
+     * @param wait If this call is to wait until this thread shuts down.
      * @param killQueue Whether to shutdown this thread's queue
      * @return whether this thread shut down the queue
      * @see #halt(boolean)
@@ -256,7 +259,20 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
         LockSupport.unpark(this);
 
         if (wait) {
-            this.waitUntilAllExecuted();
+            boolean interrupted = false;
+            for (;;) {
+                if (this.isAlive()) {
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                    break;
+                }
+                try {
+                    this.join();
+                } catch (final InterruptedException ex) {
+                    interrupted = true;
+                }
+            }
         }
 
         return ret;
@@ -297,5 +313,90 @@ public class PrioritisedQueueExecutorThread extends Thread implements Prioritise
 
     protected final void setThreadParkedVolatile(final boolean value) {
         THREAD_PARKED_HANDLE.setVolatile(this, value);
+    }
+
+    /**
+     * Required so that queue() can notify (unpark) this thread
+     */
+    private final class WrappedTask implements PrioritisedTask {
+        private final PrioritisedTask queueTask;
+
+        public WrappedTask(final PrioritisedTask queueTask) {
+            this.queueTask = queueTask;
+        }
+
+        @Override
+        public PrioritisedExecutor getExecutor() {
+            return PrioritisedQueueExecutorThread.this;
+        }
+
+        @Override
+        public boolean queue() {
+            final boolean ret = this.queueTask.queue();
+            if (ret) {
+                PrioritisedQueueExecutorThread.this.notifyTasks();
+            }
+            return ret;
+        }
+
+        @Override
+        public boolean isQueued() {
+            return this.queueTask.isQueued();
+        }
+
+        @Override
+        public boolean cancel() {
+            return this.queueTask.cancel();
+        }
+
+        @Override
+        public boolean execute() {
+            return this.queueTask.execute();
+        }
+
+        @Override
+        public Priority getPriority() {
+            return this.queueTask.getPriority();
+        }
+
+        @Override
+        public boolean setPriority(final Priority priority) {
+            return this.queueTask.setPriority(priority);
+        }
+
+        @Override
+        public boolean raisePriority(final Priority priority) {
+            return this.queueTask.raisePriority(priority);
+        }
+
+        @Override
+        public boolean lowerPriority(final Priority priority) {
+            return this.queueTask.lowerPriority(priority);
+        }
+
+        @Override
+        public long getSubOrder() {
+            return this.queueTask.getSubOrder();
+        }
+
+        @Override
+        public boolean setSubOrder(final long subOrder) {
+            return this.queueTask.setSubOrder(subOrder);
+        }
+
+        @Override
+        public boolean raiseSubOrder(final long subOrder) {
+            return this.queueTask.raiseSubOrder(subOrder);
+        }
+
+        @Override
+        public boolean lowerSubOrder(final long subOrder) {
+            return this.queueTask.lowerSubOrder(subOrder);
+        }
+
+        @Override
+        public boolean setPriorityAndSubOrder(final Priority priority, final long subOrder) {
+            return this.queueTask.setPriorityAndSubOrder(priority, subOrder);
+        }
     }
 }
